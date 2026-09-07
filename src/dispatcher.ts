@@ -1,5 +1,7 @@
 import { AuthError, CredentialStore, type Principal } from "./auth.ts";
+import type { ProcessMessage, ProcessOutcome } from "./process-adapter.ts";
 import type { Delivery, EventDefinition, WorkerCapabilities } from "./protocol.ts";
+import type { DefinitionRevision } from "./registry.ts";
 import type { DeliveryAuthority, EffectEvidence, FailureEvidence, Store, StoredEvent } from "./store.ts";
 
 export interface WorkerRegistration {
@@ -18,6 +20,16 @@ export interface WorkerRegistration {
 export interface DispatcherOptions {
   now?: (() => number) | { now(): number };
   pollTimeoutMs?: number;
+  processConcurrency?: number;
+}
+
+export interface ProcessAdapterLike {
+  run(
+    delivery: Delivery,
+    revision: DefinitionRevision,
+    signal: AbortSignal,
+    hooks?: { onMessage?(message: Exclude<ProcessMessage, { type: "complete" | "fail" | "cancelled" }>): void | Promise<void> },
+  ): Promise<ProcessOutcome>;
 }
 
 export function definitionAllowed(allowedDefinitions: readonly string[], type: string, version: number): boolean {
@@ -47,11 +59,13 @@ class DispatcherError extends Error {
 type Waiter = { resolve: () => void; timer?: ReturnType<typeof setTimeout> };
 type Clock = (() => number) | { now(): number };
 function readNow(clock: Clock): number { return typeof clock === "function" ? clock() : clock.now(); }
+
 export class Dispatcher {
   private readonly registrations = new Map<string, WorkerRegistration>();
   private readonly waiters = new Map<string, Set<Waiter>>();
   private readonly now: () => number;
   private readonly pollTimeoutMs: number;
+  private readonly processConcurrency: number;
   private readonly store: Store;
   readonly credentials: CredentialStore;
 
@@ -60,6 +74,7 @@ export class Dispatcher {
     this.credentials = credentials;
     this.now = () => readNow(options.now ?? (() => Date.now()));
     this.pollTimeoutMs = options.pollTimeoutMs ?? 30_000;
+    this.processConcurrency = Math.max(1, options.processConcurrency ?? 1);
     this.store.watchWork?.(() => this.notifyWork());
   }
 
@@ -106,12 +121,73 @@ export class Dispatcher {
     }
   }
 
+  async runProcessLoop(adapter: ProcessAdapterLike, signal: AbortSignal): Promise<void> {
+    const worker = { workerId: "relay:process" as const, maxConcurrent: this.processConcurrency };
+    const running = new Set<Promise<void>>();
+    while (!signal.aborted) {
+      while (running.size < this.processConcurrency && !signal.aborted) {
+        const delivery = this.store.acquireProcess(worker, this.now());
+        if (!delivery) break;
+        const task = this.runProcessDelivery(adapter, delivery, signal).finally(() => running.delete(task));
+        running.add(task);
+      }
+      if (running.size > 0) {
+        const waiterAbort = new AbortController();
+        const waiter = this.waitForWork("relay:process", waiterAbort.signal);
+        await Promise.race([...running, waiter]);
+        waiterAbort.abort();
+      } else {
+        await this.waitForWork("relay:process", signal);
+      }
+    }
+    await Promise.all([...running]);
+  }
+
   start(registration: WorkerRegistration, authority: DeliveryAuthority): void { this.authorized(registration, authority).store.start(authority); }
   renew(registration: WorkerRegistration, authority: DeliveryAuthority, newExpiry: number): void { this.authorized(registration, authority).store.renew(authority, newExpiry); }
   progress(registration: WorkerRegistration, authority: DeliveryAuthority, data: unknown): void { this.authorized(registration, authority).store.progress(authority, data); }
   fail(registration: WorkerRegistration, authority: DeliveryAuthority, failure: FailureEvidence): StoredEvent { return this.authorized(registration, authority).store.fail(authority, failure); }
   complete(registration: WorkerRegistration, authority: DeliveryAuthority, result: unknown, effects: EffectEvidence[]): StoredEvent { return this.authorized(registration, authority).store.complete(authority, result, effects); }
   requestCancel(eventId: string): StoredEvent { const event = this.store.requestCancel(eventId); this.notifyWork(); return event; }
+
+  private async runProcessDelivery(adapter: ProcessAdapterLike, delivery: Delivery, loopSignal: AbortSignal): Promise<void> {
+    const revision = this.store.getRevision(delivery.event.definitionRevision);
+    const authority = { eventId: delivery.event.id, workerId: "relay:process", leaseId: delivery.leaseId };
+    const controller = new AbortController();
+    const onLoopAbort = (): void => controller.abort();
+    loopSignal.addEventListener("abort", onLoopAbort, { once: true });
+    const poll = setInterval(() => {
+      const event = this.store.getEvent(delivery.event.id);
+      if (event?.state === "cancel_requested") controller.abort();
+    }, 10);
+    let outcome: ProcessOutcome | undefined;
+    try {
+      outcome = await adapter.run(delivery, revision, controller.signal, {
+        onMessage: (message) => this.applyProcessMessage(authority, message),
+      });
+      const event = this.store.getEvent(delivery.event.id);
+      if (outcome.type === "complete") this.store.complete(authority, outcome.result, outcome.effects);
+      else if (outcome.type === "fail") this.store.fail(authority, outcome.failure as FailureEvidence);
+      else if (event?.state === "cancel_requested") this.store.acknowledgeCancel(authority, outcome.effects);
+      else this.store.fail(authority, { code: "plugin_cancelled" });
+    } catch (error) {
+      const event = this.store.getEvent(delivery.event.id);
+      const code = error instanceof Error && "code" in error ? String((error as Error & { code: string }).code) : "plugin_crash";
+      const effects = outcome !== undefined && "effects" in outcome ? outcome.effects : [];
+      if (event?.state === "cancel_requested") this.store.acknowledgeCancel(authority, effects);
+      else this.store.fail(authority, { code });
+    } finally {
+      clearInterval(poll);
+      loopSignal.removeEventListener("abort", onLoopAbort);
+    }
+  }
+  private applyProcessMessage(authority: DeliveryAuthority, message: Exclude<ProcessMessage, { type: "complete" | "fail" | "cancelled" }>): void {
+    if (message.type === "started") this.store.start(authority);
+    else if (message.type === "renew") this.store.renew(authority, typeof message.leaseExpiresAt === "string" ? Date.parse(message.leaseExpiresAt) : message.leaseExpiresAt);
+    else if (message.type === "progress") this.store.progress(authority, message.data);
+    else if (message.type === "effect_started") this.store.recordEffectIntent(authority, message.effectKey, message.idempotencyBoundaryConfirmed === true);
+    else if (message.type === "effect_confirmed") this.store.confirmEffect(authority, message.effectKey, message.externalRef);
+  }
 
   private authorizeRegistration(registration: WorkerRegistration): WorkerRegistration {
     const current = this.registrations.get(registration.workerId);
@@ -126,6 +202,7 @@ export class Dispatcher {
     if (authority.workerId !== current.workerId) throw new DispatcherError("forbidden", "worker identity does not match registration");
     return this;
   }
+
   private waitForWork(workerId: string, signal: AbortSignal): Promise<void> {
     if (signal.aborted) return Promise.resolve();
     let resolve!: () => void;
