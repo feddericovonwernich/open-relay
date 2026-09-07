@@ -1,6 +1,7 @@
 {
   "name": "open-relay",
   "private": true,
+  "bin": { "relay": "./dist/src/cli.js" },
   "type": "module",
   "engines": { "node": ">=22.19" },
   "scripts": {
