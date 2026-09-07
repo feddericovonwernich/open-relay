@@ -103,6 +103,7 @@ export type Store = {
   countEvents(): number;
   acquireAgent(worker: WorkerCapabilities, now: number): Delivery | undefined;
   acquireProcess(worker: ProcessWorker, now: number): Delivery | undefined;
+  blockUnmatched?(workers: readonly WorkerCapabilities[], now: number): void;
   start(authority: DeliveryAuthority): void;
   renew(authority: DeliveryAuthority, newExpiry: number): void;
   progress(authority: DeliveryAuthority, data: unknown): void;
@@ -259,7 +260,7 @@ class SqliteStore implements Store {
     this.nextDeadline = this.db.prepare("SELECT MIN(CASE WHEN lease_expires_at < hard_deadline_at OR hard_deadline_at IS NULL THEN lease_expires_at ELSE hard_deadline_at END) AS deadline FROM events WHERE state IN ('leased', 'running', 'cancel_requested') AND lease_expires_at IS NOT NULL");
     this.activeCount = this.db.prepare("SELECT COUNT(*) AS count FROM events WHERE worker_id = ? AND state IN ('leased', 'running', 'cancel_requested')");
     this.queuedEvents = this.db.prepare(`SELECT * FROM events
-      WHERE (state = 'queued' OR (state = 'retry_wait' AND available_at <= ?))
+      WHERE (state = 'queued' OR state = 'blocked' OR (state = 'retry_wait' AND available_at <= ?))
         AND cancel_requested_at IS NULL ORDER BY created_at ASC, id ASC`);
     this.effectRows = this.db.prepare("SELECT * FROM effect_intents WHERE event_id = ?");
   }
@@ -327,6 +328,19 @@ class SqliteStore implements Store {
     if (worker.workerId !== "relay:process") return undefined;
     return this.acquire(worker, now, "process");
   }
+  blockUnmatched(workers: readonly WorkerCapabilities[], now: number): void {
+    transaction(this.db, () => {
+      const rows = this.queuedEvents.all(now) as EventRow[];
+      for (const row of rows) {
+        const revision = this.getRevision(String(row.definition_revision));
+        if (workers.some((worker) => this.agentMatches(revision, worker))) continue;
+        const eventId = String(row.id);
+        this.db.prepare("UPDATE events SET state = 'blocked', updated_at = ? WHERE id = ? AND state <> 'blocked'").run(now, eventId);
+        if (String(row.state) !== "blocked") this.insertUpdateRecord(eventId, { kind: "blocked", attempt: Number(row.attempt), data: {}, createdAt: now });
+      }
+    });
+  }
+
 
   start(authority: DeliveryAuthority): void {
     this.transition(authority, ["leased"], "running", { kind: "started", data: {} });
@@ -553,6 +567,7 @@ class SqliteStore implements Store {
 
   private agentMatches(revision: DefinitionRevision, worker: WorkerCapabilities): boolean {
     const definition = revision.definition;
+    if (definition.handler.kind !== "agent") return false;
     const name = `${definition.type}@${definition.version}`;
     if (!worker.allowedDefinitions.some((entry) => entry === "*" || entry === name || (entry.endsWith(".*") && definition.type.startsWith(entry.slice(0, -1))))) return false;
     if (!definition.requires.tools.every((tool) => worker.tools.includes(tool))) return false;
