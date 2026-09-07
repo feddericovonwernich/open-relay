@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
+import { Worker } from "node:worker_threads";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { acceptInput, errorWithCode, testStore } from "./helpers.ts";
 import { openStore } from "../src/store.ts";
@@ -38,24 +40,70 @@ test("same key with different payload is a conflict", () => {
 
 test("concurrent stores converge on one idempotent event", async () => {
   const root = await mkdtemp(join(tmpdir(), "open-relay-store-"));
-  const left = testStore();
-  left.store.close();
-  const first = openStore(join(root, "relay.sqlite"));
-  const second = openStore(join(root, "relay.sqlite"));
+  const databasePath = join(root, "relay.sqlite");
+  const bootstrap = openStore(databasePath);
+  bootstrap.close();
+  const workerScript = `
+    import { parentPort, workerData } from "node:worker_threads";
+    const { openStore } = await import(workerData.storeModule);
+    const { loadRegistry } = await import(workerData.registryModule);
+    const revision = loadRegistry(workerData.fixturesRoot, "events").resolve("ui.variant.requested", 1);
+    const store = openStore(workerData.databasePath);
+    parentPort.postMessage({ type: "ready" });
+    await new Promise((resolve) => parentPort.once("message", resolve));
+    try {
+      const accepted = store.accept({ ...workerData.input, revision });
+      parentPort.postMessage({ type: "result", eventId: accepted.event.id });
+    } catch (error) {
+      parentPort.postMessage({ type: "error", code: error?.code, message: String(error) });
+    } finally {
+      store.close();
+    }
+  `;
+  const workerData = {
+    databasePath,
+    storeModule: new URL("../src/store.ts", import.meta.url).href,
+    registryModule: new URL("../src/registry.ts", import.meta.url).href,
+    fixturesRoot: fileURLToPath(new URL("./fixtures/", import.meta.url)),
+    input: acceptInput({ producerId: "browser:concurrent", idempotencyKey: "go:concurrent" }),
+  };
+  const workers = [1, 2].map(() => {
+    const worker = new Worker(workerScript, { eval: true, type: "module", workerData } as ConstructorParameters<typeof Worker>[1]);
+    let readyResolve: () => void = () => undefined;
+    let readyReject: (error: Error) => void = () => undefined;
+    const ready = new Promise<void>((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    const result = new Promise<string>((resolve, reject) => {
+      worker.on("message", (message: { type: string; eventId?: string; code?: string; message?: string }) => {
+        if (message.type === "ready") readyResolve();
+        else if (message.type === "result" && message.eventId) resolve(message.eventId);
+        else if (message.type === "error") reject(new Error(`${message.code}: ${message.message}`));
+      });
+      worker.on("error", (error) => {
+        readyReject(error);
+        reject(error);
+      });
+    });
+    result.catch(() => undefined);
+    return { worker, ready, result };
+  });
   try {
-    first.installRevisions([left.revision]);
-    second.installRevisions([left.revision]);
-    const input = acceptInput({ producerId: "browser:concurrent", idempotencyKey: "go:concurrent" });
-    const results = await Promise.all([
-      Promise.resolve().then(() => first.accept({ ...input, revision: left.revision })),
-      Promise.resolve().then(() => second.accept({ ...input, revision: left.revision })),
-    ]);
-    assert.equal(results[0].event.id, results[1].event.id);
-    assert.equal(first.countEvents(), 1);
-    assert.equal(first.listUpdatesAfter(0).length, 1);
+    await Promise.all(workers.map(({ ready }) => ready));
+    for (const { worker } of workers) worker.postMessage("go");
+    const eventIds = await Promise.all(workers.map(({ result }) => result));
+    assert.equal(eventIds[0], eventIds[1]);
+    await Promise.all(workers.map(({ worker }) => worker.terminate()));
+    const store = openStore(databasePath);
+    try {
+      assert.equal(store.countEvents(), 1);
+      assert.equal(store.listUpdatesAfter(0).length, 1);
+    } finally {
+      store.close();
+    }
   } finally {
-    first.close();
-    second.close();
+    await Promise.all(workers.map(({ worker }) => worker.terminate()));
   }
 });
 
