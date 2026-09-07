@@ -87,9 +87,10 @@ export function createRelayServer(options: ServerOptions): Server {
   const allowedOrigins = new Set(options.allowedOrigins ?? options.corsOrigins ?? []);
   const runtimePath = options.runtimePath ?? join(options.projectRoot ?? process.cwd(), ".relay", "runtime.json");
   const controller = new AbortController();
+  let loops: Promise<void>[] = [];
   let started = false;
   let runtimeWritten = false;
-  let loops: Promise<void>[] = [];
+  const streams = new Set<AbortController>();
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error) => sendError(request, response, error));
@@ -220,15 +221,20 @@ export function createRelayServer(options: ServerOptions): Server {
       const eventId = parsed.searchParams.get("eventId") ?? undefined;
       response.writeHead(200, { ...headers(request), "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", Connection: "keep-alive" });
       const abort = new AbortController();
+      streams.add(abort);
       request.on("aborted", () => abort.abort());
       response.on("close", () => abort.abort());
-      for await (const frame of streamUpdates(options.store, notifier, { cursor, eventId, heartbeatMs: options.heartbeatMs, signal: abort.signal })) {
-        if (response.writableEnded) break;
-        if (frame.id !== undefined) response.write(`id: ${frame.id}\n`);
-        response.write(`event: ${frame.event}\n`);
-        response.write(`data: ${serialize(frame.data ?? {})}\n\n`);
+      try {
+        for await (const frame of streamUpdates(options.store, notifier, { cursor, eventId, heartbeatMs: options.heartbeatMs, signal: abort.signal })) {
+          if (response.writableEnded) break;
+          if (frame.id !== undefined) response.write(`id: ${frame.id}\n`);
+          response.write(`event: ${frame.event}\n`);
+          response.write(`data: ${serialize(frame.data ?? {})}\n\n`);
+        }
+        if (!response.writableEnded) response.end();
+      } finally {
+        streams.delete(abort);
       }
-      if (!response.writableEnded) response.end();
       return;
     }
 
@@ -258,10 +264,9 @@ export function createRelayServer(options: ServerOptions): Server {
       send(request, response, 201, { scope, subjectId: input.subjectId, token });
       return;
     }
-
     if (method === "POST" && path === "/v1/agent/poll") {
       const { registration } = worker(request);
-      const signal = requestSignal(request);
+      const signal = requestSignal(request, response);
       const delivery = await options.dispatcher.poll(registration, signal);
       if (!response.writableEnded) send(request, response, 200, delivery ?? null);
       return;
@@ -273,7 +278,7 @@ export function createRelayServer(options: ServerOptions): Server {
       const action = leaseMatch[2];
       const { registration } = worker(request);
       if (action === "control" && method === "GET") {
-        const result = await options.dispatcher.control(registration, leaseId, requestSignal(request));
+        const result = await options.dispatcher.control(registration, leaseId, requestSignal(request, response));
         if (!response.writableEnded) send(request, response, 200, { status: result });
         return;
       }
@@ -285,8 +290,10 @@ export function createRelayServer(options: ServerOptions): Server {
       else if (action === "progress") options.dispatcher.progress(registration, authority, input.data);
       else if (action === "cancelled") options.dispatcher.acknowledgeCancel(registration, authority, Array.isArray(input.effects) ? input.effects as EffectEvidence[] : []);
       else if (action === "complete") options.dispatcher.complete(registration, authority, input.result, Array.isArray(input.effects) ? input.effects as EffectEvidence[] : []);
-      else if (action === "fail") options.dispatcher.fail(registration, authority, input as { code: string });
-      else throw new StoreError("not_found", "route not found");
+      else if (action === "fail") {
+        const code = requiredString(input.code, "code");
+        options.dispatcher.fail(registration, authority, { ...input, code });
+      } else throw new StoreError("not_found", "route not found");
       wake();
       send(request, response, 200, { ok: true });
       return;
@@ -314,8 +321,7 @@ export function createRelayServer(options: ServerOptions): Server {
 
     throw new StoreError("not_found", "route not found");
   }
-
-  function requestSignal(request: IncomingMessage): AbortSignal {
+  function requestSignal(request: IncomingMessage, response: ServerResponse): AbortSignal {
     const requestController = new AbortController();
     const timer = setTimeout(() => requestController.abort(), options.pollTimeoutMs ?? 30_000);
     const abort = (): void => {
@@ -323,8 +329,12 @@ export function createRelayServer(options: ServerOptions): Server {
       requestController.abort();
     };
     request.on("aborted", abort);
+    response.once("finish", abort);
+    response.once("close", abort);
     requestController.signal.addEventListener("abort", () => {
       request.removeListener("aborted", abort);
+      response.removeListener("finish", abort);
+      response.removeListener("close", abort);
     }, { once: true });
     return requestController.signal;
   }
@@ -344,9 +354,27 @@ export function createRelayServer(options: ServerOptions): Server {
     if (options.processAdapter) loops.push(options.dispatcher.runProcessLoop(options.processAdapter, controller.signal));
   });
 
+  const nativeListen = server.listen.bind(server) as (...args: unknown[]) => Server;
+  server.listen = ((...args: unknown[]) => {
+    const first = args[0];
+    if (typeof first === "object" && first !== null) {
+      const listenOptions = first as { host?: unknown; port?: unknown };
+      if (typeof listenOptions.port !== "number") throw new Error("loopback HTTP server requires a numeric port");
+      const host = listenOptions.host;
+      if (host !== undefined && host !== "127.0.0.1" && host !== "localhost" && host !== "::1") throw new Error("relay server must bind to loopback");
+      if (host === undefined) listenOptions.host = "127.0.0.1";
+    } else {
+      if (typeof first !== "number") throw new Error("loopback HTTP server requires a numeric port");
+      const hostIndex = args.findIndex((value, index) => index > 0 && typeof value === "string");
+      if (hostIndex >= 0 && args[hostIndex] !== "127.0.0.1" && args[hostIndex] !== "localhost" && args[hostIndex] !== "::1") throw new Error("relay server must bind to loopback");
+      if (hostIndex < 0) args.splice(1, 0, "127.0.0.1");
+    }
+    return nativeListen(...args);
+  }) as typeof server.listen;
   const close = server.close.bind(server);
   server.close = ((callback?: (error?: Error) => void) => {
     controller.abort();
+    for (const stream of streams) stream.abort();
     close(() => {
       void Promise.allSettled(loops).then(async () => {
         if (runtimeWritten) { await unlink(runtimePath).catch(() => undefined); runtimeWritten = false; }
