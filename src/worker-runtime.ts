@@ -51,7 +51,7 @@ export interface TrustedWorkerRuntimeOptions {
   readonly registeredTools: readonly string[];
   readonly systemTools?: readonly string[];
   readonly retrieved?: ContextInput["retrieved"];
-  readonly contextInput?: ContextInput | ((delivery: Delivery) => ContextInput);
+  readonly contextInput?: Pick<ContextInput, "payload" | "retrieved" | "retrievedContext"> | ((delivery: Delivery) => Pick<ContextInput, "payload" | "retrieved" | "retrievedContext">);
   readonly tokenizer?: Tokenizer;
   readonly maxInputTokens: number;
   readonly maxOutputTokens: number;
@@ -61,6 +61,15 @@ export interface TrustedWorkerRuntimeOptions {
   readonly onProgress?: (data: unknown) => void | Promise<void>;
   readonly onLog?: (data: unknown) => void | Promise<void>;
 }
+
+type TrustedContextConfig = Readonly<{
+  systemPolicy: string;
+  definitionInstructions: string;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  contextTokens?: number;
+  tokenizer?: Tokenizer;
+}>;
 
 function authorityFor(delivery: Delivery, authority: TrustedWorkerRuntimeOptions["authority"]): DeliveryAuthority {
   return typeof authority === "function" ? authority(delivery) : authority ?? { workerId: delivery.workerId, leaseId: delivery.leaseId, eventId: delivery.event.id };
@@ -76,7 +85,7 @@ function redact(value: unknown, secrets: readonly string[], seen = new WeakSet<o
   if (seen.has(value)) return "[REDACTED]";
   seen.add(value);
   if (Array.isArray(value)) return value.map((entry) => redact(entry, secrets, seen));
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redact(entry, secrets, seen)]));
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [redact(key, secrets, seen), redact(entry, secrets, seen)]));
 }
 
 function errorCode(error: unknown): string {
@@ -86,31 +95,48 @@ function errorCode(error: unknown): string {
 export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T extends ToolAdapter = ToolAdapter> {
   private readonly options: TrustedWorkerRuntimeOptions & { model: M; tools?: T; toolAdapter?: T };
   private readonly tools: T;
+  private readonly trusted: TrustedContextConfig;
   private readonly allowedTools: readonly string[];
 
   constructor(options: TrustedWorkerRuntimeOptions & { model: M; tools?: T; toolAdapter?: T });
   constructor(model: M, tools: T, options: Omit<TrustedWorkerRuntimeOptions, "model" | "tools" | "toolAdapter">);
   constructor(first: (TrustedWorkerRuntimeOptions & { model: M; tools?: T; toolAdapter?: T }) | M, second?: T, third?: Omit<TrustedWorkerRuntimeOptions, "model" | "tools" | "toolAdapter">) {
-    this.options = (typeof first === "object" && "model" in first
+    const options = (typeof first === "object" && "model" in first
       ? first
       : { ...third, model: first, tools: second }) as TrustedWorkerRuntimeOptions & { model: M; tools?: T; toolAdapter?: T };
-    const tools = this.options.tools ?? this.options.toolAdapter;
+    this.options = options;
+    const definitionTools = Object.freeze([...(options.definitionTools ?? options.definition?.tools ?? [])]);
+    const registeredTools = Object.freeze([...options.registeredTools]);
+    const systemTools = Object.freeze([...(options.systemTools ?? [])]);
+    this.trusted = Object.freeze({
+      systemPolicy: options.systemPolicy,
+      definitionInstructions: options.definitionInstructions ?? options.definition?.instructions ?? "",
+      maxInputTokens: options.maxInputTokens,
+      maxOutputTokens: options.maxOutputTokens,
+      contextTokens: options.contextTokens,
+      tokenizer: options.tokenizer,
+    });
+    const tools = options.tools ?? options.toolAdapter;
     if (!tools) throw new TypeError("a tool adapter is required");
     this.tools = tools;
-    const definitionTools = this.options.definitionTools ?? this.options.definition?.tools ?? [];
     this.allowedTools = intersectToolPolicy(
       definitionTools,
-      this.options.registeredTools,
-      this.options.systemTools ?? definitionTools,
+      registeredTools,
+      systemTools,
     ).allowedTools;
   }
 
   async run(delivery: Delivery): Promise<WorkerOutcome> {
-    const context = this.makeContext(delivery);
-    const authority = authorityFor(delivery, this.options.authority);
-    const controller = new AbortController();
     const effects: EffectEvidence[] = [];
     const secretValues: string[] = [];
+    let context: AssembledContext;
+    try {
+      context = this.makeContext(delivery);
+    } catch (error) {
+      return { status: "failed", code: errorCode(error), error: redact(error, secretValues), effects };
+    }
+    const authority = authorityFor(delivery, this.options.authority);
+    const controller = new AbortController();
     let cancelResolve!: () => void;
     const cancellation = new Promise<"cancelled">((resolve) => { cancelResolve = () => resolve("cancelled"); });
     const controlTask = this.controlLoop(authority, controller, () => {
@@ -137,18 +163,17 @@ export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T exten
   private makeContext(delivery: Delivery): AssembledContext {
     const supplied = this.options.contextInput;
     const input = typeof supplied === "function" ? supplied(delivery) : supplied;
-    const base = input ?? {
-      systemPolicy: this.options.systemPolicy,
-      definitionInstructions: this.options.definitionInstructions ?? this.options.definition?.instructions ?? "",
-      payload: delivery.event.payload,
-      retrieved: this.options.retrieved,
+    return assembleAgentContext({
+      systemPolicy: this.trusted.systemPolicy,
+      definitionInstructions: this.trusted.definitionInstructions,
+      payload: input?.payload ?? delivery.event.payload,
+      retrieved: input?.retrieved ?? input?.retrievedContext ?? this.options.retrieved,
       allowedTools: this.allowedTools,
-      maxInputTokens: this.options.maxInputTokens,
-      maxOutputTokens: this.options.maxOutputTokens,
-      contextTokens: this.options.contextTokens,
-      tokenizer: this.options.tokenizer,
-    };
-    return assembleAgentContext({ ...base, allowedTools: this.allowedTools, payload: delivery.event.payload });
+      maxInputTokens: this.trusted.maxInputTokens,
+      maxOutputTokens: this.trusted.maxOutputTokens,
+      contextTokens: this.trusted.contextTokens,
+      tokenizer: this.trusted.tokenizer,
+    });
   }
 
   private async executeModel(context: AssembledContext, signal: AbortSignal, effects: EffectEvidence[], secretValues: string[]): Promise<WorkerOutcome> {
