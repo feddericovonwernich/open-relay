@@ -18,6 +18,10 @@ export class LeaseReaper {
 
   async start(signal: AbortSignal): Promise<void> {
     try {
+      if (!signal.aborted) {
+        const expired = this.store.expireLeases(this.clock.now());
+        if (expired.length > 0) this.notify();
+      }
       while (!signal.aborted) {
         const deadline = this.store.nextLeaseDeadline();
         await this.sleep(deadline === undefined ? 1000 : Math.max(0, deadline - this.clock.now()), signal);
