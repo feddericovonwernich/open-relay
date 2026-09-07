@@ -63,3 +63,19 @@ export interface Delivery {
   leaseExpiresAt: string;
   hardDeadlineAt: string;
 }
+export interface DeliveryAuthority {
+  eventId?: string;
+  workerId: string;
+  leaseId: string;
+}
+
+export type TrustLevel = "trusted" | "untrusted";
+
+export interface EffectEvidence {
+  effectKey?: string;
+  status?: "none" | "started" | "unknown" | "confirmed" | "cancelled";
+  effectStatus?: "none" | "started" | "unknown" | "confirmed" | "cancelled";
+  idempotencyBoundaryConfirmed?: boolean;
+  externalRef?: string;
+  [key: string]: unknown;
+}
