@@ -73,4 +73,9 @@ export class CredentialStore {
     if (typeof token !== "string" || !token) return;
     this.records.delete(digest(token).toString("hex"));
   }
+  adopt(token: string, scope: Scope, subjectId: string, grants: string[] = []): void {
+    if (!token || !subjectId) throw new AuthError("invalid_credential", "credential is invalid");
+    const tokenDigest = digest(token);
+    this.records.set(tokenDigest.toString("hex"), { digest: tokenDigest, scope, subjectId, grants: [...grants] });
+  }
 }

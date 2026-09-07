@@ -91,6 +91,33 @@ export class Dispatcher {
     this.notifyWork();
     return registration;
   }
+  registrationFor(token: string): WorkerRegistration {
+    const principal = this.credentials.verify(token, "worker");
+    const registration = this.registrations.get(principal.subjectId);
+    if (!registration || registration.token !== token) throw new DispatcherError("forbidden", "worker registration is not current");
+    return registration;
+  }
+
+  async control(registration: WorkerRegistration, leaseId: string, signal: AbortSignal): Promise<"cancel_requested" | "timeout"> {
+    const current = this.authorizeRegistration(registration);
+    const deadline = Date.now() + this.pollTimeoutMs;
+    while (!signal.aborted && Date.now() < deadline) {
+      const event = this.store.snapshotAtHighWater().snapshot.events.find((candidate) => candidate.workerId === current.workerId && candidate.leaseId === leaseId);
+      if (event?.state === "cancel_requested") return "cancel_requested";
+      if (!event || !["leased", "running", "cancel_requested"].includes(event.state)) return "timeout";
+      await new Promise<void>((resolve) => {
+        let timer: NodeJS.Timeout;
+        const done = (): void => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", done);
+          resolve();
+        };
+        timer = setTimeout(done, 25);
+        signal.addEventListener("abort", done, { once: true });
+      });
+    }
+    return "timeout";
+  }
 
   authenticateWorker(token: string): Principal {
     return this.credentials.verify(token, "worker");
@@ -150,6 +177,9 @@ export class Dispatcher {
   complete(registration: WorkerRegistration, authority: DeliveryAuthority, result: unknown, effects: EffectEvidence[]): StoredEvent { return this.authorized(registration, authority).store.complete(authority, result, effects); }
   requestCancel(eventId: string): StoredEvent { const event = this.store.requestCancel(eventId); this.notifyWork(); return event; }
 
+  acknowledgeCancel(registration: WorkerRegistration, authority: DeliveryAuthority, evidence: EffectEvidence[]): StoredEvent {
+    return this.authorized(registration, authority).store.acknowledgeCancel(authority, evidence);
+  }
   private async runProcessDelivery(adapter: ProcessAdapterLike, delivery: Delivery, loopSignal: AbortSignal): Promise<void> {
     const revision = this.store.getRevision(delivery.event.definitionRevision);
     const authority = { eventId: delivery.event.id, workerId: "relay:process", leaseId: delivery.leaseId };
