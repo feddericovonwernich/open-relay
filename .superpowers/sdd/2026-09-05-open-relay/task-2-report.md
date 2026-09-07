@@ -81,7 +81,7 @@ The combined command exited with status 0. No formatter, linter, or project-wide
 
 ## Commit
 
-Implementation commit: `9ec6cdc` (`feat: add idempotent event acceptance`)
+Implementation commit: `51f0bd2` (`feat: add idempotent event acceptance`)
 
 ## Concerns
 
