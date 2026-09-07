@@ -1,0 +1,16 @@
+{
+  "name": "open-relay",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "dependencies": { "ajv": "^8.17.1" },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.9.2"
+  }
+}
