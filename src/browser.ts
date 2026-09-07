@@ -144,9 +144,26 @@ async function* responseChunks(body: ReadableStream<Uint8Array> | null): AsyncIt
       yield next.value;
     }
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
+async function waitForReconnect(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(done, milliseconds);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      done();
+    };
+    function done(): void {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 
 export class RelayBrowserClient {
   private readonly config: ClientConfig;
@@ -224,13 +241,9 @@ export class RelayBrowserClient {
         if (error instanceof RelayClientError) throw error;
       }
       if (signal?.aborted) return;
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, options.reconnectDelayMs ?? this.config.reconnectDelayMs);
-        signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
-      });
+      await waitForReconnect(options.reconnectDelayMs ?? this.config.reconnectDelayMs, signal);
     }
   }
-
   private async request(path: string, init: RequestInit, retries = 0): Promise<Response> {
     const url = toAbsoluteUrl(this.config.baseUrl, path);
     const headers = new Headers(init.headers);

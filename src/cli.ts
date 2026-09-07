@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,7 @@ export interface CliIo {
   stderr?: { write(value: string): void };
 }
 
-type Runtime = { port: number; token: string; pid?: number };
+export type Runtime = { port: number; token: string; pid?: number };
 type JsonObject = Record<string, unknown>;
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -101,6 +101,20 @@ async function readRuntime(cwd: string, options: Record<string, CliOptionValue>)
   if (!Number.isInteger(runtime.port) || typeof runtime.token !== "string" || runtime.token.length === 0) throw new Error("runtime file is invalid");
   return runtime as Runtime;
 }
+export async function verifyRuntimeProcess(runtime: Runtime): Promise<void> {
+  const pid = runtime.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 1) throw new Error("runtime does not contain a valid process id");
+  let commandLine: string;
+  try { commandLine = await readFile(`/proc/${pid}/cmdline`, "utf8"); }
+  catch { throw new Error("relay process identity could not be verified"); }
+  if (!commandLine.includes("cli.js") && !commandLine.includes("relay")) throw new Error("runtime process identity does not match relay");
+  let response: Response;
+  try { response = await fetch(`http://127.0.0.1:${runtime.port}/v1/events/__relay_stop_probe__`, { headers: { Authorization: `Bearer ${runtime.token}` } }); }
+  catch { throw new Error("relay loopback health check failed"); }
+  await response.body?.cancel();
+  if (response.status !== 403) throw new Error("relay loopback health check failed");
+}
+
 
 async function request(runtime: Runtime, method: string, path: string, body?: unknown, scopeToken = runtime.token): Promise<unknown> {
   const response = await fetch(`http://127.0.0.1:${runtime.port}${path}`, {
@@ -172,6 +186,7 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
     const path = await runtimeFile(root, parsed.options);
     const runtime = await readRuntime(root, parsed.options);
     if (runtime.pid !== undefined && runtime.pid !== process.pid) {
+      await verifyRuntimeProcess(runtime);
       process.kill(runtime.pid, "SIGTERM");
       io.stdout.write("relay stopped\n");
     } else throw new Error("runtime does not contain a stoppable process");
@@ -181,9 +196,9 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
   const runtime = await readRuntime(root, parsed.options);
   if (parsed.command === "emit") {
     const type = requiredArg(parsed.args, 0, "event type");
-    const version = Number(requiredArg(parsed.args, 1, "event version"));
+    const version = Number(option(parsed.options, "version") ?? requiredArg(parsed.args, 1, "event version"));
     if (!Number.isInteger(version)) throw new Error("event version must be an integer");
-    const payloadText = option(parsed.options, "payload") ?? requiredArg(parsed.args, 2, "event payload");
+    const payloadText = option(parsed.options, "json", "payload") ?? requiredArg(parsed.args, 2, "event payload");
     const payload = JSON.parse(payloadText);
     const token = await scopedToken(runtime, "producer");
     const value = await request(runtime, "POST", "/v1/events", { type, version, payload, idempotencyKey: option(parsed.options, "idempotency-key", "key") ?? `cli:${process.pid}:${Date.now()}` }, token);
@@ -204,10 +219,10 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
     if (action === "list") { await recoveryList(runtime, io); return 0; }
     if (action === "resolve") {
       const eventId = requiredArg(parsed.args, 1, "event id");
-      const state = requiredArg(parsed.args, 2, "resolution state");
+      const state = option(parsed.options, "as") ?? requiredArg(parsed.args, 2, "resolution state");
       if (!["completed", "failed", "cancelled"].includes(state)) throw new Error("resolution state must be completed, failed, or cancelled");
       const evidenceText = option(parsed.options, "evidence") ?? requiredArg(parsed.args, 3, "resolution evidence");
-      printJson(io, withoutSecrets(await request(runtime, "POST", `/v1/recovery/${encodeURIComponent(eventId)}/resolve`, { state, evidence: JSON.parse(evidenceText) })));
+      printJson(io, withoutSecrets(await request(runtime, "POST", `/v1/recovery/${encodeURIComponent(eventId)}/resolve`, { as: state, evidence: JSON.parse(evidenceText) })));
       return 0;
     }
     throw new Error(`unknown recovery action: ${action}`);
@@ -247,4 +262,9 @@ export async function main(): Promise<void> {
   process.exitCode = await runCli(process.argv.slice(2));
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) void main();
+export function isCliEntrypoint(argvPath: string, modulePath = fileURLToPath(import.meta.url)): boolean {
+  try { return realpathSync(resolve(argvPath)) === realpathSync(modulePath); }
+  catch { return false; }
+}
+
+if (process.argv[1] !== undefined && isCliEntrypoint(process.argv[1])) void main();
