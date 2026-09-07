@@ -237,7 +237,7 @@ export function compileRevision(record: StoredDefinitionRevision): DefinitionRev
 
 function definitionFiles(directory: string): string[] {
   const files: string[] = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...definitionFiles(path));
     else if (entry.isFile() && entry.name.endsWith(".json")) files.push(path);
@@ -296,6 +296,7 @@ export function loadRegistry(projectRoot: string, definitionsDir: string, previo
     let instructions: string | undefined;
     let resolvedCommand: string | undefined;
     let instructionBytes = "";
+    let commandBytes = "";
     if (definition.handler.kind === "agent") {
       const instructionPath = resolveReferencedPath(root, definition.handler.instructions, directory);
       instructionBytes = readFileSync(instructionPath).toString("utf8");
@@ -308,6 +309,7 @@ export function loadRegistry(projectRoot: string, definitionsDir: string, previo
       } catch {
         throw new RegistryError("definition_invalid", `process command is not executable: ${commandPath}`);
       }
+      commandBytes = readFileSync(commandPath).toString("base64");
       resolvedCommand = commandPath;
     }
 
@@ -316,6 +318,7 @@ export function loadRegistry(projectRoot: string, definitionsDir: string, previo
       inputBytes.toString("utf8"),
       outputBytes.toString("utf8"),
       instructionBytes,
+      commandBytes,
     ]);
     const old = prior.get(key);
     if (old && old.digest !== digest) {
