@@ -9,5 +9,6 @@ process.stdin.on("end", () => {
   if (process.env.EFFECT_COUNT_FILE) appendFileSync(process.env.EFFECT_COUNT_FILE, "effect:42\n");
   process.stdout.write(JSON.stringify({ type: "started" }) + "\n");
   process.stdout.write(JSON.stringify({ type: "effect_started", effectKey: "effect:42", idempotencyBoundaryConfirmed: false }) + "\n");
-  setTimeout(() => process.exit(1), 5_000);
+  const delay = Number(process.env.CRASH_DELAY_MS ?? 5_000);
+  setTimeout(() => process.exit(1), Number.isFinite(delay) ? delay : 5_000);
 });

@@ -31,7 +31,8 @@ interface RelayProject {
   time: TestClock;
   store: Store;
   registry: Registry;
-  startRelay(): Promise<RelayHandle>;
+  startRelay(runProcess?: boolean): Promise<RelayHandle>;
+  reopenStore(): void;
   effectExecutionCount(key: string): Promise<number>;
   cleanup(): Promise<void>;
 }
@@ -62,7 +63,7 @@ async function testProject(options: { plugin?: string; effectPolicy?: string } =
       effectPolicy: options.effectPolicy ?? "manual-recovery", timeoutMs: 30_000, hardDeadlineMs: 60_000,
       retry: { maxAttempts: 2, backoffMs: [1], retryableCodes: ["plugin_crash", "plugin_cancelled"] },
       requires: { tools: [], structuredOutput: false, minContextTokens: 0, maxInputTokens: 0, maxOutputTokens: 0, maxPayloadBytes: 65_536 },
-      handler: { kind: "process", command: options.plugin, args: [], env: ["PATH", "EFFECT_COUNT_FILE"] },
+      handler: { kind: "process", command: options.plugin, args: [], env: ["PATH", "EFFECT_COUNT_FILE", "CRASH_DELAY_MS"] },
     }));
   }
   const time = clock();
@@ -72,11 +73,11 @@ async function testProject(options: { plugin?: string; effectPolicy?: string } =
   initialStore.installRevisions(registry.revisions());
   const project: RelayProject = {
     root, dbPath, countPath, time, store: initialStore, registry,
-    async startRelay(): Promise<RelayHandle> {
+    async startRelay(runProcess = true): Promise<RelayHandle> {
       const credentials = new CredentialStore({ now: time });
       const dispatcher = new Dispatcher(project.store, credentials, { now: time, pollTimeoutMs: 100 });
       const reaper = new LeaseReaper(project.store, () => dispatcher.notifyWork(), time);
-      const processAdapter = options.plugin ? new ProcessAdapter({ projectRoot: root, env: { ...process.env, EFFECT_COUNT_FILE: countPath }, gracePeriodMs: 20 }) : undefined;
+      const processAdapter = options.plugin && runProcess ? new ProcessAdapter({ projectRoot: root, env: { ...process.env, EFFECT_COUNT_FILE: countPath, CRASH_DELAY_MS: "20" }, gracePeriodMs: 20 }) : undefined;
       const server = createRelayServer({ store: project.store, registry, credentials, dispatcher, reaper, processAdapter, projectRoot: root, definitionsDir: "events", closeStore: false }) as RelayServer;
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -113,6 +114,11 @@ async function testProject(options: { plugin?: string; effectPolicy?: string } =
       let text = "";
       try { text = await readFile(countPath, "utf8"); } catch { return 0; }
       return text.split("\n").filter((line) => line === key).length;
+    },
+    reopenStore() {
+      project.store.close();
+      project.store = openStore(dbPath, time);
+      project.store.installRevisions(registry.revisions());
     },
     async cleanup() { project.store.close(); await rm(root, { recursive: true, force: true }); },
   };
@@ -173,6 +179,42 @@ test("restart expiry schedules only retry-safe and proven idempotent work", asyn
   }
 });
 
+test("restart preserves queued, leased, retry-waiting, cancel-requested, completed, and recovery states", async () => {
+  const states = ["queued", "leased", "retry_wait", "cancel_requested", "completed", "recovery_required"] as const;
+  for (const expected of states) {
+    const project = await testProject();
+    let first: RelayHandle | undefined;
+    let second: RelayHandle | undefined;
+    try {
+      first = await project.startRelay(false);
+      const base = project.registry.resolve("ui.variant.requested", 1);
+      const revision: DefinitionRevision = expected === "recovery_required"
+        ? { ...base, digest: `e2e:restart:${expected}`, definition: { ...base.definition, type: `e2e.restart.${expected}`, effectPolicy: "manual-recovery" } }
+        : base;
+      const event = project.store.accept({ producerId: "e2e:restart", idempotencyKey: `restart:${expected}`, payload: { variant: "dark" }, revision }).event;
+      if (expected !== "queued") {
+        const delivery = project.store.acquireAgent({ workerId: "e2e:restart-worker", allowedDefinitions: ["*"], tools: [], structuredOutput: true, contextTokens: 8_000, systemReserveTokens: 0, maxConcurrent: 1 }, project.time.now());
+        if (!delivery) throw new Error(`could not lease ${expected} event`);
+        const authority = { eventId: event.id, workerId: delivery.workerId, leaseId: delivery.leaseId };
+        if (expected !== "leased") project.store.start(authority);
+        if (expected === "retry_wait") project.store.fail(authority, { code: "temporarily_unavailable", effectStatus: "none" });
+        else if (expected === "cancel_requested") project.store.requestCancel(event.id);
+        else if (expected === "completed") project.store.complete(authority, { ok: true }, []);
+        else if (expected === "recovery_required") project.store.fail(authority, { code: "worker_lost", effectStatus: "unknown" });
+      }
+      assert.equal(project.store.getEvent(event.id)?.state, expected);
+      await first.killRelay();
+      project.reopenStore();
+      second = await project.startRelay(false);
+      assert.equal((await second.get(event.id)).state, expected);
+    } finally {
+      if (second) await second.killRelay();
+      else if (first) await first.killRelay();
+      await project.cleanup();
+    }
+  }
+});
+
 test("historical revision remains deliverable after its active definition is removed", async () => {
   const project = await testProject();
   try {
@@ -208,20 +250,68 @@ test("correlated events preserve correlation IDs without promising cross-event o
   }
 });
 
-test("ambiguous consequential effect survives restart without duplicate execution", async () => {
+test("agent cancellation control reports and settles every effect boundary", async () => {
+  const cases: readonly [string, (project: RelayProject, authority: { eventId: string; workerId: string; leaseId: string }) => void, string][] = [
+    ["before intent", () => {}, "cancelled"],
+    ["after intent", (project, authority) => { project.store.recordEffectIntent(authority, "effect:42", false); }, "recovery_required"],
+    ["after external call", (project, authority) => { project.store.recordEffectIntent(authority, "effect:42", false); }, "recovery_required"],
+    ["after confirmation", (project, authority) => { project.store.recordEffectIntent(authority, "effect:42", true); project.store.confirmEffect(authority, "effect:42", "external:42"); }, "recovery_required"],
+  ];
+  for (const [boundary, setup, expected] of cases) {
+    const project = await testProject();
+    let relay: RelayHandle | undefined;
+    try {
+      relay = await project.startRelay(false);
+      const event = await relay.emit({ idempotencyKey: `cancel:${boundary}` });
+      const registrationResponse = await request(relay.base, "POST", "/v1/workers/register", relay.server.adminToken, { workerId: `e2e:${boundary}`, allowedDefinitions: ["*"], tools: [], structuredOutput: true, contextTokens: 8_000, systemReserveTokens: 0, maxConcurrent: 1 });
+      const worker = (await registrationResponse.json()) as { token: string };
+      const deliveryResponse = await request(relay.base, "POST", "/v1/agent/poll", worker.token, {});
+      const delivery = (await deliveryResponse.json()) as { leaseId: string; workerId: string };
+      const authority = { eventId: event.id, workerId: delivery.workerId, leaseId: delivery.leaseId };
+      setup(project, authority);
+      const cancelResponse = await request(relay.base, "POST", `/v1/events/${event.id}/cancel`, relay.producer, {});
+      assert.equal(cancelResponse.status, 200);
+      const control = await request(relay.base, "GET", `/v1/deliveries/${delivery.leaseId}/control`, worker.token);
+      assert.equal((await control.json() as { status: string }).status, "cancel_requested");
+      const acknowledged = await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/cancelled`, worker.token, { effects: [] });
+      assert.equal(acknowledged.status, 200);
+      assert.equal((await relay.get(event.id)).state, expected);
+    } finally {
+      if (relay) await relay.killRelay();
+      await project.cleanup();
+    }
+  }
+});
+test("ambiguous consequential effect survives a crashed worker restart without duplicate execution", async () => {
   const project = await testProject({ plugin: "effect-then-crash.mjs", effectPolicy: "manual-recovery" });
+  let first: RelayHandle | undefined;
+  let second: RelayHandle | undefined;
   try {
-    const first = await project.startRelay();
+    first = await project.startRelay(false);
     const event = await first.emit({ idempotencyKey: "effect:42" });
-    await first.waitForUpdate(event.id, "effect_started");
+    const revision = project.store.getRevision(event.definitionRevision);
+    const delivery = project.store.acquireProcess({ workerId: "relay:process", maxConcurrent: 1 }, project.time.now());
+    if (!delivery) throw new Error("effect event was not leased");
+    const authority = { eventId: event.id, workerId: delivery.workerId, leaseId: delivery.leaseId };
+    const adapter = new ProcessAdapter({ projectRoot: project.root, env: { ...process.env, EFFECT_COUNT_FILE: project.countPath, CRASH_DELAY_MS: "20" }, gracePeriodMs: 20 });
+    await assert.rejects(adapter.run(delivery, revision, AbortSignal.timeout(1_000), {
+      onMessage(message) {
+        if (message.type === "started") project.store.start(authority);
+        else if (message.type === "effect_started") project.store.recordEffectIntent(authority, message.effectKey, message.idempotencyBoundaryConfirmed === true);
+      },
+    }), (error: unknown) => error instanceof Error && "code" in error && (error as { code?: unknown }).code === "plugin_crash");
     const leaseExpiry = Number((await first.get(event.id)).leaseExpiresAt);
     await first.killRelay();
+    project.reopenStore();
     project.time.set(leaseExpiry + 1);
-
-    const second = await project.startRelay();
+    second = await project.startRelay(false);
     const recovered = await second.waitForState(event.id, "recovery_required");
     assert.equal(recovered.attempt, 1);
     assert.equal(await project.effectExecutionCount("effect:42"), 1);
-    await second.killRelay();
-  } finally { await project.cleanup(); }
+  } finally {
+    if (second) await second.killRelay();
+    else if (first) await first.killRelay();
+    await project.cleanup();
+  }
 });
+ 
