@@ -120,6 +120,7 @@ export type Store = {
   acquireProcess(worker: ProcessWorker, now: number): Delivery | undefined;
   blockUnmatched?(workers: readonly WorkerCapabilities[], now: number): void;
   watchWork?(listener: () => void): () => void;
+  nextAvailableAt?(): number | undefined;
   start(authority: DeliveryAuthority): void;
   renew(authority: DeliveryAuthority, newExpiry: number): void;
   progress(authority: DeliveryAuthority, data: unknown): void;
@@ -195,19 +196,17 @@ function revisionMaterial(revision: DefinitionRevision): StoredDefinitionRevisio
     version: revision.definition.version,
   };
 }
-
 function effectStatus(effect: EffectEvidence): string | undefined { return effect.status ?? effect.effectStatus; }
+function reducedEffectStatuses(evidence: readonly EffectEvidence[]): Map<string, string | undefined> {
+  const statuses = new Map<string, string | undefined>();
+  for (const entry of evidence) statuses.set(entry.effectKey ?? "#default", effectStatus(entry));
+  return statuses;
+}
 function evidenceMayHaveEffect(evidence: readonly EffectEvidence[]): boolean {
-  return evidence.some((entry) => {
-    const status = effectStatus(entry);
-    return status === "started" || status === "unknown" || status === "confirmed";
-  });
+  return [...reducedEffectStatuses(evidence).values()].some((status) => status === "started" || status === "unknown" || status === "confirmed");
 }
 function evidenceIsUnknown(evidence: readonly EffectEvidence[]): boolean {
-  return evidence.some((entry) => {
-    const status = effectStatus(entry);
-    return status === "started" || status === "unknown";
-  });
+  return [...reducedEffectStatuses(evidence).values()].some((status) => status === "started" || status === "unknown");
 }
 
 class SqliteStore implements Store {
@@ -230,6 +229,7 @@ class SqliteStore implements Store {
   private readonly leaseListeners = new Set<() => void>();
   private readonly workListeners = new Set<() => void>();
   private readonly nextDeadline: StatementSync;
+  private readonly nextAvailable: StatementSync;
   private readonly activeCount: StatementSync;
   private readonly queuedEvents: StatementSync;
   private readonly effectRows: StatementSync;
@@ -295,13 +295,13 @@ class SqliteStore implements Store {
     this.readEvent = this.db.prepare("SELECT * FROM events WHERE id = ?");
     this.readHighWater = this.db.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM updates");
     this.nextDeadline = this.db.prepare("SELECT MIN(CASE WHEN lease_expires_at < hard_deadline_at OR hard_deadline_at IS NULL THEN lease_expires_at ELSE hard_deadline_at END) AS deadline FROM events WHERE state IN ('leased', 'running', 'cancel_requested') AND lease_expires_at IS NOT NULL");
+    this.nextAvailable = this.db.prepare("SELECT MIN(available_at) AS available_at FROM events WHERE state = 'retry_wait'");
     this.activeCount = this.db.prepare("SELECT COUNT(*) AS count FROM events WHERE worker_id = ? AND state IN ('leased', 'running', 'cancel_requested')");
     this.queuedEvents = this.db.prepare(`SELECT * FROM events
       WHERE (state = 'queued' OR state = 'blocked' OR (state = 'retry_wait' AND available_at <= ?))
         AND cancel_requested_at IS NULL ORDER BY created_at ASC, id ASC`);
     this.effectRows = this.db.prepare("SELECT * FROM effect_intents WHERE event_id = ?");
   }
-
   installRevisions(revisions: readonly DefinitionRevision[]): void {
     transaction(this.db, () => { for (const revision of revisions) this.installRevision(revision); });
   }
@@ -309,6 +309,7 @@ class SqliteStore implements Store {
   accept(input: AcceptInput): AcceptResult {
     if (!input.revision.validateInput(input.payload)) throw new StoreError("invalid_input", `payload does not match ${input.revision.definition.type}@${input.revision.definition.version}`);
     const payloadJson = json(input.payload, "payload");
+    if (Buffer.byteLength(payloadJson, "utf8") > input.revision.definition.requires.maxPayloadBytes) throw new StoreError("payload_too_large", `payload exceeds maxPayloadBytes for ${input.revision.definition.type}@${input.revision.definition.version}`);
     const payloadDigest = digest(input.payload);
     const result = transaction(this.db, () => {
       this.installRevision(input.revision);
@@ -578,6 +579,10 @@ class SqliteStore implements Store {
 
   nextLeaseDeadline(): number | undefined {
     const value = (this.nextDeadline.get() as EventRow).deadline;
+    return value == null ? undefined : Number(value);
+  }
+  nextAvailableAt(): number | undefined {
+    const value = (this.nextAvailable.get() as EventRow).available_at;
     return value == null ? undefined : Number(value);
   }
 

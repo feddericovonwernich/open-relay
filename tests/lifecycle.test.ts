@@ -23,7 +23,7 @@ function authority(delivery: Delivery): DeliveryAuthority {
 function queuedStore(overrides: Partial<DefinitionRevision["definition"]> = {}) {
   const time = clock();
   const store = openStore(":memory:", time);
-  const revision = overrides.effectPolicy || overrides.handler ? {
+  const revision = Object.keys(overrides).length > 0 ? {
     ...baseRevision,
     digest: `revision-${Math.random()}`,
     definition: { ...baseRevision.definition, ...overrides },
@@ -172,6 +172,23 @@ test("confirmed effects settle and manual recovery failures recover", () => {
 
   const failed = runningStore({ effectPolicy: "manual-recovery" });
   assert.equal(failed.store.fail(authority(failed.delivery), { code: "temporarily_unavailable", effectStatus: "confirmed" }).state, "recovery_required");
+});
+test("later confirmed effect evidence overrides earlier started evidence", () => {
+  const context = runningStore({ effectPolicy: "manual-recovery" });
+  const event = context.store.complete(authority(context.delivery), { ok: true }, [
+    { effectKey: "charge", status: "started" },
+    { effectKey: "charge", status: "confirmed", externalRef: "ref" },
+  ]);
+  assert.equal(event.state, "completed");
+});
+
+test("acceptance rejects payloads larger than immutable revision limit", () => {
+  const context = queuedStore({ requires: { ...baseRevision.definition.requires, maxPayloadBytes: 20 } });
+  assert.throws(
+    () => context.store.accept({ producerId: "producer:large", idempotencyKey: "large", payload: { variant: "this is too large" }, revision: context.revision }),
+    expectCode("payload_too_large"),
+  );
+  assert.equal(context.store.countEvents(), 1);
 });
 
 test("renewal wakes the reaper to reschedule a nearer deadline", async () => {

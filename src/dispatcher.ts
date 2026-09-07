@@ -175,6 +175,12 @@ export class Dispatcher {
   progress(registration: WorkerRegistration, authority: DeliveryAuthority, data: unknown): void { this.authorized(registration, authority).store.progress(authority, data); }
   fail(registration: WorkerRegistration, authority: DeliveryAuthority, failure: FailureEvidence): StoredEvent { return this.authorized(registration, authority).store.fail(authority, failure); }
   complete(registration: WorkerRegistration, authority: DeliveryAuthority, result: unknown, effects: EffectEvidence[]): StoredEvent { return this.authorized(registration, authority).store.complete(authority, result, effects); }
+  recordEffectIntent(registration: WorkerRegistration, authority: DeliveryAuthority, effectKey: string, idempotencyBoundaryConfirmed: boolean): void {
+    this.authorized(registration, authority).store.recordEffectIntent(authority, effectKey, idempotencyBoundaryConfirmed);
+  }
+  confirmEffect(registration: WorkerRegistration, authority: DeliveryAuthority, effectKey: string, externalRef: string): void {
+    this.authorized(registration, authority).store.confirmEffect(authority, effectKey, externalRef);
+  }
   requestCancel(eventId: string): StoredEvent { const event = this.store.requestCancel(eventId); this.notifyWork(); return event; }
 
   acknowledgeCancel(registration: WorkerRegistration, authority: DeliveryAuthority, evidence: EffectEvidence[]): StoredEvent {
@@ -250,7 +256,9 @@ export class Dispatcher {
     waiter.resolve = finish;
     pending.add(waiter);
     signal.addEventListener("abort", finish, { once: true });
-    waiter.timer = setTimeout(finish, this.pollTimeoutMs);
+    const availableAt = this.store.nextAvailableAt?.();
+    const delay = availableAt === undefined ? this.pollTimeoutMs : Math.max(0, Math.min(this.pollTimeoutMs, availableAt - this.now()));
+    waiter.timer = setTimeout(finish, delay);
     return promise;
   }
 }

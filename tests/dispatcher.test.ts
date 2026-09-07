@@ -99,3 +99,26 @@ test("worker registration identity fences settlement", () => {
   const forged = current.dispatcher.registerWorker(worker({ workerId: "worker:other" }));
   assert.throws(() => current.dispatcher.complete(forged, { eventId: delivery.event.id, workerId: delivery.workerId, leaseId: delivery.leaseId }, { ok: true }, []), { code: "forbidden" });
 });
+test("retry backoff wakes polling at availableAt", async () => {
+  const now = Date.now;
+  const time = { now };
+  const retryRevision = {
+    ...revision,
+    digest: "retry-wake-revision",
+    definition: { ...revision.definition, retry: { ...revision.definition.retry, backoffMs: [25] } },
+  } as DefinitionRevision;
+  const store = openStore(":memory:", time);
+  store.installRevisions([retryRevision]);
+  const accepted = store.accept({ producerId: "retry:producer", idempotencyKey: "retry:wake", payload: { variant: "dark" }, revision: retryRevision });
+  const credentials = new CredentialStore({ now: time });
+  const dispatcher = new Dispatcher(store, credentials, { now: time, pollTimeoutMs: 200 });
+  const registration = dispatcher.registerWorker(worker());
+  const delivery = await dispatcher.poll(registration, AbortSignal.timeout(100));
+  assert.ok(delivery);
+  dispatcher.start(registration, { eventId: accepted.event.id, workerId: delivery.workerId, leaseId: delivery.leaseId });
+  dispatcher.fail(registration, { eventId: accepted.event.id, workerId: delivery.workerId, leaseId: delivery.leaseId }, { code: "temporarily_unavailable", effectStatus: "none" });
+  const startedAt = Date.now();
+  const retried = await dispatcher.poll(registration, AbortSignal.timeout(500));
+  assert.ok(retried);
+  assert.ok(Date.now() - startedAt < 200);
+});

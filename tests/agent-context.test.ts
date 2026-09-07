@@ -103,6 +103,28 @@ test("runtime cancellation aborts model and tool and acknowledges effects", asyn
   assert.equal(toolAborted, true);
   assert.equal(modelAborted, true);
 });
+test("runtime persists effect intent before confirming downstream effects", async () => {
+  const calls: string[] = [];
+  const runtime = new TrustedWorkerRuntime({
+    model: { async *generate() {
+      yield { type: "effect", evidence: { effectKey: "charge", status: "started", idempotencyBoundaryConfirmed: true } } as const;
+      yield { type: "effect", evidence: { effectKey: "charge", status: "confirmed", externalRef: "ref-1" } } as const;
+      yield { type: "complete", result: { ok: true } } as const;
+    } },
+    tools: { invoke: async () => ({}) },
+    systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: [], registeredTools: [], systemTools: [],
+    transport: {
+      control: async () => "timeout",
+      cancelled: async () => undefined,
+      recordEffectIntent: async (_authority, effectKey, boundary) => { calls.push(`intent:${effectKey}:${boundary}`); },
+      confirmEffect: async (_authority, effectKey, externalRef) => { calls.push(`confirm:${effectKey}:${externalRef}`); },
+    },
+    tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
+  });
+  const outcome = await runtime.run(delivery());
+  assert.equal(outcome.status, "completed");
+  assert.deepEqual(calls, ["intent:charge:true", "confirm:charge:ref-1"]);
+});
 
 test("runtime redacts secrets in object keys and every validation sink", async () => {
   const observed: unknown[] = [];

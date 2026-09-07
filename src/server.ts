@@ -91,7 +91,7 @@ export function createRelayServer(options: ServerOptions): Server {
   let started = false;
   let runtimeWritten = false;
   const streams = new Set<AbortController>();
-
+  const requests = new Set<AbortController>();
   const server = createServer((request, response) => {
     void handle(request, response).catch((error) => sendError(request, response, error));
   });
@@ -272,7 +272,7 @@ export function createRelayServer(options: ServerOptions): Server {
       return;
     }
 
-    const leaseMatch = /^\/v1\/deliveries\/([^/]+)\/(start|renew|progress|control|cancelled|complete|fail)$/.exec(path);
+    const leaseMatch = /^\/v1\/deliveries\/([^/]+)\/(start|renew|progress|control|cancelled|complete|fail|effect-intent|effect-confirmation)$/.exec(path);
     if (leaseMatch) {
       const leaseId = decodeURIComponent(leaseMatch[1]);
       const action = leaseMatch[2];
@@ -290,6 +290,8 @@ export function createRelayServer(options: ServerOptions): Server {
       else if (action === "progress") options.dispatcher.progress(registration, authority, input.data);
       else if (action === "cancelled") options.dispatcher.acknowledgeCancel(registration, authority, Array.isArray(input.effects) ? input.effects as EffectEvidence[] : []);
       else if (action === "complete") options.dispatcher.complete(registration, authority, input.result, Array.isArray(input.effects) ? input.effects as EffectEvidence[] : []);
+      else if (action === "effect-intent") options.dispatcher.recordEffectIntent(registration, authority, requiredString(input.effectKey, "effectKey"), input.idempotencyBoundaryConfirmed === true);
+      else if (action === "effect-confirmation") options.dispatcher.confirmEffect(registration, authority, requiredString(input.effectKey, "effectKey"), requiredString(input.externalRef, "externalRef"));
       else if (action === "fail") {
         const code = requiredString(input.code, "code");
         options.dispatcher.fail(registration, authority, { ...input, code });
@@ -323,6 +325,7 @@ export function createRelayServer(options: ServerOptions): Server {
   }
   function requestSignal(request: IncomingMessage, response: ServerResponse): AbortSignal {
     const requestController = new AbortController();
+    requests.add(requestController);
     const timer = setTimeout(() => requestController.abort(), options.pollTimeoutMs ?? 30_000);
     const abort = (): void => {
       clearTimeout(timer);
@@ -332,6 +335,7 @@ export function createRelayServer(options: ServerOptions): Server {
     response.once("finish", abort);
     response.once("close", abort);
     requestController.signal.addEventListener("abort", () => {
+      requests.delete(requestController);
       request.removeListener("aborted", abort);
       response.removeListener("finish", abort);
       response.removeListener("close", abort);
@@ -375,6 +379,7 @@ export function createRelayServer(options: ServerOptions): Server {
   server.close = ((callback?: (error?: Error) => void) => {
     controller.abort();
     for (const stream of streams) stream.abort();
+    for (const request of requests) request.abort();
     close(() => {
       void Promise.allSettled(loops).then(async () => {
         if (runtimeWritten) { await unlink(runtimePath).catch(() => undefined); runtimeWritten = false; }

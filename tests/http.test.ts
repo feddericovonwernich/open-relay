@@ -33,6 +33,19 @@ test("loopback routes accept, observe, and settle an agent delivery", async () =
     assert.equal(((await (await request(relay.base, "GET", `/v1/events/${eventId}`, relay.observer)).json()) as { state: string }).state, "completed");
   } finally { await closeHarness(relay); }
 });
+test("authenticated workers can persist lease-scoped effect evidence", async () => {
+  const relay = await harness();
+  try {
+    const eventId = await accept(relay, "effect-http:1");
+    const worker = await register(relay);
+    const delivery = await (await request(relay.base, "POST", "/v1/agent/poll", worker, {})).json() as { leaseId: string };
+    assert.equal((await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/effect-intent`, worker, { effectKey: "charge", idempotencyBoundaryConfirmed: true })).status, 200);
+    assert.equal((await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/effect-confirmation`, worker, { effectKey: "charge", externalRef: "ref-1" })).status, 200);
+    assert.equal((await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/effect-intent`, relay.observer, { effectKey: "forged", idempotencyBoundaryConfirmed: true })).status, 403);
+    assert.deepEqual(relay.store.listUpdatesAfter(0, eventId).map((entry) => entry.kind), ["queued", "leased", "effect_started", "effect_confirmed"]);
+  } finally { await closeHarness(relay); }
+});
+
 
 test("HTTP idempotency conflict and concurrent identical acceptance", async () => {
   const relay = await harness();
@@ -52,6 +65,21 @@ test("HTTP rejects JSON/schema errors, process exclusion, abort, CORS, body limi
   } finally { await closeHarness(relay); }
 });
 
+test("server close aborts outstanding agent poll signals", async () => {
+  const relay = await harness({ pollTimeoutMs: 1000 });
+  const worker = await register(relay);
+  const pending = fetch(`${relay.base}/v1/agent/poll`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${worker}`, "Content-Type": "application/json" },
+    body: "{}",
+  }).catch((error: unknown) => error);
+  await new Promise((resolve) => setImmediate(resolve));
+  const startedAt = Date.now();
+  await new Promise<void>((resolve) => relay.server.close(() => resolve()));
+  assert.ok(Date.now() - startedAt < 500);
+  assert.ok((await pending) instanceof Error);
+  await rm(relay.root, { recursive: true, force: true });
+});
 test("HTTP cancellation control and acknowledgement settle the lease", async () => {
   const relay = await harness({ pollTimeoutMs: 500 });
   try { const eventId = await accept(relay, "cancel:1"); const worker = await register(relay); const delivery = await (await request(relay.base, "POST", "/v1/agent/poll", worker, {})).json() as { leaseId: string }; const control = fetch(`${relay.base}/v1/deliveries/${delivery.leaseId}/control`, { headers: { Authorization: `Bearer ${worker}` } }); await new Promise((resolve) => setImmediate(resolve)); assert.equal((await request(relay.base, "POST", `/v1/events/${eventId}/cancel`, relay.producer, {})).status, 200); assert.equal((await (await control).json() as { status: string }).status, "cancel_requested"); assert.equal((await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/cancelled`, worker, { effects: [] })).status, 200); assert.equal(((await (await request(relay.base, "GET", `/v1/events/${eventId}`, relay.observer)).json()) as { state: string }).state, "cancelled"); } finally { await closeHarness(relay); }

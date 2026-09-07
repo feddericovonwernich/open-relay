@@ -22,6 +22,8 @@ export interface SecretResolver {
 export interface WorkerTransport {
   control(authority: DeliveryAuthority, signal: AbortSignal): Promise<"cancel_requested" | "timeout">;
   cancelled(authority: DeliveryAuthority, evidence: readonly EffectEvidence[]): Promise<void>;
+  recordEffectIntent?(authority: DeliveryAuthority, effectKey: string, idempotencyBoundaryConfirmed: boolean): Promise<void>;
+  confirmEffect?(authority: DeliveryAuthority, effectKey: string, externalRef: string): Promise<void>;
 }
 
 export type ModelEvent =
@@ -143,7 +145,7 @@ export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T exten
       cancelResolve();
       controller.abort();
     });
-    const modelTask = this.executeModel(context, controller.signal, effects, secretValues);
+    const modelTask = this.executeModel(authority, context, controller.signal, effects, secretValues);
     void modelTask.catch(() => undefined);
     try {
       const result = await Promise.race([modelTask, cancellation]);
@@ -176,7 +178,7 @@ export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T exten
     });
   }
 
-  private async executeModel(context: AssembledContext, signal: AbortSignal, effects: EffectEvidence[], secretValues: string[]): Promise<WorkerOutcome> {
+  private async executeModel(authority: DeliveryAuthority, context: AssembledContext, signal: AbortSignal, effects: EffectEvidence[], secretValues: string[]): Promise<WorkerOutcome> {
     for await (const event of this.options.model.generate(context, signal)) {
       const type = event.type;
       if (type === "tool_call" || type === "tool_request") {
@@ -195,6 +197,7 @@ export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T exten
         }
       } else if (type === "effect") {
         const safe = redact(event.evidence, secretValues) as EffectEvidence;
+        await this.persistEffectEvidence(authority, safe);
         effects.push(safe);
       } else if (type === "progress") {
         const safe = redact(event.data, secretValues);
@@ -203,13 +206,27 @@ export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T exten
       } else if (type === "fail") {
         return { status: "failed", code: event.code ?? "model_failed", error: redact(event.error, secretValues), effects: [...effects] };
       } else if (type === "complete") {
-        if (event.effects) effects.push(...event.effects.map((entry) => redact(entry, secretValues) as EffectEvidence));
+        if (event.effects) {
+          for (const entry of event.effects) {
+            const safe = redact(entry, secretValues) as EffectEvidence;
+            await this.persistEffectEvidence(authority, safe);
+            effects.push(safe);
+          }
+        }
         const safe = redact(event.result, secretValues);
         if (this.options.validateResult && !await this.options.validateResult(safe)) return { status: "failed", code: "invalid_output", error: safe, effects: [...effects] };
         return { status: "completed", result: safe, effects: [...effects] };
       }
     }
     return { status: "failed", code: "model_ended_without_result", effects: [...effects] };
+  }
+
+  private async persistEffectEvidence(authority: DeliveryAuthority, evidence: EffectEvidence): Promise<void> {
+    const effectKey = evidence.effectKey;
+    const status = evidence.status ?? evidence.effectStatus;
+    if (!effectKey) return;
+    if (status === "started") await this.options.transport.recordEffectIntent?.(authority, effectKey, evidence.idempotencyBoundaryConfirmed === true);
+    else if (status === "confirmed" && typeof evidence.externalRef === "string") await this.options.transport.confirmEffect?.(authority, effectKey, evidence.externalRef);
   }
 
   private async controlLoop(authority: DeliveryAuthority, controller: AbortController, cancel: () => void): Promise<void> {
