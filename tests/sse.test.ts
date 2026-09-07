@@ -20,20 +20,24 @@ test("fresh snapshot and high-water mark share one read transaction", () => {
   const path = join(root, "relay.sqlite");
   const fixture = testStore();
   fixture.store.close();
-  const store = openStore(path);
   const writerStore = openStore(path);
-  store.installRevisions([fixture.revision]);
   writerStore.installRevisions([fixture.revision]);
+  let injected = false;
+  const store = openStore(path, { now: () => Date.now() }, {
+    betweenSnapshotAndHighWater: () => {
+      if (injected) return;
+      injected = true;
+      writerStore.accept({ ...acceptInput({ idempotencyKey: "between-reads" }), revision: fixture.revision });
+    },
+  });
+  store.installRevisions([fixture.revision]);
   try {
     const first = store.accept({ ...acceptInput({ idempotencyKey: "first" }), revision: fixture.revision }).event;
-    const before = store.snapshotAtHighWater();
-    assert.equal(before.snapshot.lastSequence, before.highWater);
-    const second = writerStore.accept({ ...acceptInput({ idempotencyKey: "second" }), revision: fixture.revision }).event;
-    const after = store.snapshotAtHighWater();
-    assert.equal(after.snapshot.lastSequence, after.highWater);
-    assert.ok(after.highWater > before.highWater);
-    assert.equal(after.snapshot.events.some((event) => event.id === first.id), true);
-    assert.equal(after.snapshot.events.some((event) => event.id === second.id), true);
+    const result = store.snapshotAtHighWater();
+    assert.equal(result.snapshot.lastSequence, result.highWater);
+    assert.equal(result.highWater, 1);
+    assert.deepEqual(result.snapshot.events.map((event) => event.id), [first.id]);
+    assert.equal(writerStore.snapshotAtHighWater().highWater, 2);
   } finally {
     writerStore.close();
     store.close();

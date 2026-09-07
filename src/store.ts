@@ -65,6 +65,10 @@ export interface SnapshotAtHighWater {
   highWater: number;
 }
 
+export interface StoreReadHooks {
+  betweenSnapshotAndHighWater?(): void;
+}
+
 export interface DeliveryAuthority { eventId?: string; workerId: string; leaseId: string; }
 
 export interface FailureEvidence {
@@ -222,6 +226,7 @@ class SqliteStore implements Store {
   private readonly readEvents: StatementSync;
   private readonly readEvent: StatementSync;
   private readonly readHighWater: StatementSync;
+  private readonly hooks: StoreReadHooks;
   private readonly leaseListeners = new Set<() => void>();
   private readonly workListeners = new Set<() => void>();
   private readonly nextDeadline: StatementSync;
@@ -229,9 +234,10 @@ class SqliteStore implements Store {
   private readonly queuedEvents: StatementSync;
   private readonly effectRows: StatementSync;
 
-  constructor(path: string, clock: Clock) {
+  constructor(path: string, clock: Clock, hooks: StoreReadHooks = {}) {
     this.db = new DatabaseSync(path);
     this.clock = clock;
+    this.hooks = hooks;
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 2500;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS definition_revisions (
@@ -336,6 +342,7 @@ class SqliteStore implements Store {
   snapshotAtHighWater(eventId?: string): SnapshotAtHighWater {
     return readTransaction(this.db, () => {
       const rows = (eventId === undefined ? this.readEvents.all() : this.readEvent.all(eventId)) as EventRow[];
+      this.hooks.betweenSnapshotAndHighWater?.();
       const highWater = Number((this.readHighWater.get() as EventRow).sequence);
       const snapshot: EventSnapshot = {
         events: rows.map((row) => this.rowToEvent(row)),
@@ -722,4 +729,4 @@ class SqliteStore implements Store {
   }
 }
 
-export function openStore(path: string, clock: Clock = { now: () => Date.now() }): Store { return new SqliteStore(path, clock); }
+export function openStore(path: string, clock: Clock = { now: () => Date.now() }, hooks: StoreReadHooks = {}): Store { return new SqliteStore(path, clock, hooks); }
