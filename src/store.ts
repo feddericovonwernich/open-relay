@@ -55,6 +55,16 @@ export interface UpdateRecord {
   createdAt: number;
 }
 
+export interface EventSnapshot {
+  events: readonly StoredEvent[];
+  lastSequence: number;
+}
+
+export interface SnapshotAtHighWater {
+  snapshot: EventSnapshot;
+  highWater: number;
+}
+
 export interface DeliveryAuthority { eventId?: string; workerId: string; leaseId: string; }
 
 export interface FailureEvidence {
@@ -98,6 +108,7 @@ export type Store = {
   installRevisions(revisions: readonly DefinitionRevision[]): void;
   accept(input: AcceptInput): AcceptResult;
   getEvent(id: string): StoredEvent | undefined;
+  snapshotAtHighWater(eventId?: string): SnapshotAtHighWater;
   listUpdatesAfter(cursor: number, eventId?: string): UpdateRecord[];
   getRevision(digest: string): DefinitionRevision;
   countEvents(): number;
@@ -156,6 +167,18 @@ function transaction<T>(db: DatabaseSync, fn: () => T): T {
   }
 }
 
+function readTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec("BEGIN");
+  try {
+    const value = fn();
+    db.exec("COMMIT");
+    return value;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* preserve the transaction error */ }
+    throw error;
+  }
+}
+
 function revisionMaterial(revision: DefinitionRevision): StoredDefinitionRevision & { type: string; version: number } {
   return {
     digest: revision.digest,
@@ -196,6 +219,9 @@ class SqliteStore implements Store {
   private readonly countEventRows: StatementSync;
   private readonly readUpdates: StatementSync;
   private readonly readEventUpdates: StatementSync;
+  private readonly readEvents: StatementSync;
+  private readonly readEvent: StatementSync;
+  private readonly readHighWater: StatementSync;
   private readonly leaseListeners = new Set<() => void>();
   private readonly workListeners = new Set<() => void>();
   private readonly nextDeadline: StatementSync;
@@ -259,6 +285,9 @@ class SqliteStore implements Store {
     this.countEventRows = this.db.prepare("SELECT COUNT(*) AS count FROM events");
     this.readUpdates = this.db.prepare("SELECT * FROM updates WHERE sequence > ? ORDER BY sequence ASC");
     this.readEventUpdates = this.db.prepare("SELECT * FROM updates WHERE sequence > ? AND event_id = ? ORDER BY sequence ASC");
+    this.readEvents = this.db.prepare("SELECT * FROM events ORDER BY created_at ASC, id ASC");
+    this.readEvent = this.db.prepare("SELECT * FROM events WHERE id = ?");
+    this.readHighWater = this.db.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM updates");
     this.nextDeadline = this.db.prepare("SELECT MIN(CASE WHEN lease_expires_at < hard_deadline_at OR hard_deadline_at IS NULL THEN lease_expires_at ELSE hard_deadline_at END) AS deadline FROM events WHERE state IN ('leased', 'running', 'cancel_requested') AND lease_expires_at IS NOT NULL");
     this.activeCount = this.db.prepare("SELECT COUNT(*) AS count FROM events WHERE worker_id = ? AND state IN ('leased', 'running', 'cancel_requested')");
     this.queuedEvents = this.db.prepare(`SELECT * FROM events
@@ -303,6 +332,17 @@ class SqliteStore implements Store {
   getEvent(id: string): StoredEvent | undefined {
     const row = this.findEvent.get(id);
     return row ? this.rowToEvent(row) : undefined;
+  }
+  snapshotAtHighWater(eventId?: string): SnapshotAtHighWater {
+    return readTransaction(this.db, () => {
+      const rows = (eventId === undefined ? this.readEvents.all() : this.readEvent.all(eventId)) as EventRow[];
+      const highWater = Number((this.readHighWater.get() as EventRow).sequence);
+      const snapshot: EventSnapshot = {
+        events: rows.map((row) => this.rowToEvent(row)),
+        lastSequence: highWater,
+      };
+      return { snapshot, highWater };
+    });
   }
 
   listUpdatesAfter(cursor: number, eventId?: string): UpdateRecord[] {
