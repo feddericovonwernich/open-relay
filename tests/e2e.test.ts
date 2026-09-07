@@ -7,6 +7,8 @@ import { CredentialStore } from "../src/auth.ts";
 import { Dispatcher } from "../src/dispatcher.ts";
 import { ProcessAdapter } from "../src/process-adapter.ts";
 import { loadRegistry, type DefinitionRevision, type Registry } from "../src/registry.ts";
+import { TrustedWorkerRuntime, type ModelAdapter } from "../src/worker-runtime.ts";
+import type { Delivery, EffectEvidence } from "../src/protocol.ts";
 import { LeaseReaper } from "../src/reaper.ts";
 import { createRelayServer, type RelayServer } from "../src/server.ts";
 import { openStore, type Store } from "../src/store.ts";
@@ -179,8 +181,8 @@ test("restart expiry schedules only retry-safe and proven idempotent work", asyn
   }
 });
 
-test("restart preserves queued, leased, retry-waiting, cancel-requested, completed, and recovery states", async () => {
-  const states = ["queued", "leased", "retry_wait", "cancel_requested", "completed", "recovery_required"] as const;
+test("restart preserves queued, blocked, leased, running, retry-waiting, cancel-requested, completed, and recovery states", async () => {
+  const states = ["queued", "blocked", "leased", "running", "retry_wait", "cancel_requested", "completed", "recovery_required"] as const;
   for (const expected of states) {
     const project = await testProject();
     let first: RelayHandle | undefined;
@@ -192,7 +194,8 @@ test("restart preserves queued, leased, retry-waiting, cancel-requested, complet
         ? { ...base, digest: `e2e:restart:${expected}`, definition: { ...base.definition, type: `e2e.restart.${expected}`, effectPolicy: "manual-recovery" } }
         : base;
       const event = project.store.accept({ producerId: "e2e:restart", idempotencyKey: `restart:${expected}`, payload: { variant: "dark" }, revision }).event;
-      if (expected !== "queued") {
+      if (expected === "blocked") project.store.blockUnmatched?.([], project.time.now());
+      else if (expected !== "queued") {
         const delivery = project.store.acquireAgent({ workerId: "e2e:restart-worker", allowedDefinitions: ["*"], tools: [], structuredOutput: true, contextTokens: 8_000, systemReserveTokens: 0, maxConcurrent: 1 }, project.time.now());
         if (!delivery) throw new Error(`could not lease ${expected} event`);
         const authority = { eventId: event.id, workerId: delivery.workerId, leaseId: delivery.leaseId };
@@ -251,30 +254,67 @@ test("correlated events preserve correlation IDs without promising cross-event o
 });
 
 test("agent cancellation control reports and settles every effect boundary", async () => {
-  const cases: readonly [string, (project: RelayProject, authority: { eventId: string; workerId: string; leaseId: string }) => void, string][] = [
-    ["before intent", () => {}, "cancelled"],
-    ["after intent", (project, authority) => { project.store.recordEffectIntent(authority, "effect:42", false); }, "recovery_required"],
-    ["after external call", (project, authority) => { project.store.recordEffectIntent(authority, "effect:42", false); }, "recovery_required"],
-    ["after confirmation", (project, authority) => { project.store.recordEffectIntent(authority, "effect:42", true); project.store.confirmEffect(authority, "effect:42", "external:42"); }, "recovery_required"],
+  const cases: readonly [string, EffectEvidence | undefined, string][] = [
+    ["before intent", undefined, "cancelled"],
+    ["after intent", { effectKey: "effect:42", status: "started", idempotencyBoundaryConfirmed: false }, "recovery_required"],
+    ["after external call", { effectKey: "effect:42", status: "unknown" }, "recovery_required"],
+    ["after confirmation", { effectKey: "effect:42", status: "confirmed", externalRef: "external:42" }, "recovery_required"],
   ];
-  for (const [boundary, setup, expected] of cases) {
+  for (const [boundary, effect, expected] of cases) {
     const project = await testProject();
     let relay: RelayHandle | undefined;
     try {
       relay = await project.startRelay(false);
+      const activeRelay = relay;
       const event = await relay.emit({ idempotencyKey: `cancel:${boundary}` });
       const registrationResponse = await request(relay.base, "POST", "/v1/workers/register", relay.server.adminToken, { workerId: `e2e:${boundary}`, allowedDefinitions: ["*"], tools: [], structuredOutput: true, contextTokens: 8_000, systemReserveTokens: 0, maxConcurrent: 1 });
       const worker = (await registrationResponse.json()) as { token: string };
       const deliveryResponse = await request(relay.base, "POST", "/v1/agent/poll", worker.token, {});
-      const delivery = (await deliveryResponse.json()) as { leaseId: string; workerId: string };
-      const authority = { eventId: event.id, workerId: delivery.workerId, leaseId: delivery.leaseId };
-      setup(project, authority);
+      const delivery = (await deliveryResponse.json()) as Delivery;
+      let readyResolve!: () => void;
+      const ready = new Promise<void>((resolve) => { readyResolve = resolve; });
+      const model: ModelAdapter = {
+        async *generate(_context, signal) {
+          if (effect) yield { type: "effect", evidence: effect } as const;
+          readyResolve();
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      };
+      let reportedEffects: readonly EffectEvidence[] | undefined;
+      const runtime = new TrustedWorkerRuntime({
+        model,
+        tools: { invoke: async () => ({}) },
+        systemPolicy: "policy",
+        definitionInstructions: "instructions",
+        definitionTools: [],
+        registeredTools: [],
+        systemTools: [],
+        transport: {
+          async control(_authority, signal) {
+            const response = await fetch(`${activeRelay.base}/v1/deliveries/${delivery.leaseId}/control`, { headers: { Authorization: `Bearer ${worker.token}` }, signal });
+            if (!response.ok) return "timeout";
+            return (await response.json() as { status: "cancel_requested" | "timeout" }).status;
+          },
+          async cancelled(authority, effects) {
+            reportedEffects = effects;
+            const response = await request(activeRelay.base, "POST", `/v1/deliveries/${authority.leaseId}/cancelled`, worker.token, { effects });
+            assert.equal(response.status, 200);
+          },
+        },
+        maxInputTokens: 200,
+        maxOutputTokens: 20,
+        tokenizer: (text) => text.length,
+      });
+      const running = runtime.run(delivery);
+      await ready;
       const cancelResponse = await request(relay.base, "POST", `/v1/events/${event.id}/cancel`, relay.producer, {});
       assert.equal(cancelResponse.status, 200);
-      const control = await request(relay.base, "GET", `/v1/deliveries/${delivery.leaseId}/control`, worker.token);
-      assert.equal((await control.json() as { status: string }).status, "cancel_requested");
-      const acknowledged = await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/cancelled`, worker.token, { effects: [] });
-      assert.equal(acknowledged.status, 200);
+      const outcome = await running;
+      assert.equal(outcome.status, "cancelled");
+      assert.deepEqual(reportedEffects, effect ? [effect] : []);
       assert.equal((await relay.get(event.id)).state, expected);
     } finally {
       if (relay) await relay.killRelay();
