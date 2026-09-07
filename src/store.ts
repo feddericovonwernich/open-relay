@@ -104,6 +104,7 @@ export type Store = {
   acquireAgent(worker: WorkerCapabilities, now: number): Delivery | undefined;
   acquireProcess(worker: ProcessWorker, now: number): Delivery | undefined;
   blockUnmatched?(workers: readonly WorkerCapabilities[], now: number): void;
+  watchWork?(listener: () => void): () => void;
   start(authority: DeliveryAuthority): void;
   renew(authority: DeliveryAuthority, newExpiry: number): void;
   progress(authority: DeliveryAuthority, data: unknown): void;
@@ -194,8 +195,9 @@ class SqliteStore implements Store {
   private readonly insertUpdate: StatementSync;
   private readonly countEventRows: StatementSync;
   private readonly readUpdates: StatementSync;
-  private readonly leaseListeners = new Set<() => void>();
   private readonly readEventUpdates: StatementSync;
+  private readonly leaseListeners = new Set<() => void>();
+  private readonly workListeners = new Set<() => void>();
   private readonly nextDeadline: StatementSync;
   private readonly activeCount: StatementSync;
   private readonly queuedEvents: StatementSync;
@@ -273,7 +275,7 @@ class SqliteStore implements Store {
     if (!input.revision.validateInput(input.payload)) throw new StoreError("invalid_input", `payload does not match ${input.revision.definition.type}@${input.revision.definition.version}`);
     const payloadJson = json(input.payload, "payload");
     const payloadDigest = digest(input.payload);
-    return transaction(this.db, () => {
+    const result = transaction(this.db, () => {
       this.installRevision(input.revision);
       const existing = this.findEventByKey.get(input.producerId, input.idempotencyKey);
       if (existing) {
@@ -294,6 +296,8 @@ class SqliteStore implements Store {
       this.insertUpdateRecord(id, { kind: "queued", attempt: 0, data: {}, createdAt: now });
       return { event, created: true };
     });
+    if (result.created) this.notifyWorkListeners();
+    return result;
   }
 
   getEvent(id: string): StoredEvent | undefined {
@@ -534,6 +538,10 @@ class SqliteStore implements Store {
     this.leaseListeners.add(listener);
     return () => { this.leaseListeners.delete(listener); };
   }
+  watchWork(listener: () => void): () => void {
+    this.workListeners.add(listener);
+    return () => { this.workListeners.delete(listener); };
+  }
 
   close(): void { this.db.close(); }
 
@@ -614,6 +622,9 @@ class SqliteStore implements Store {
 
   private notifyLeaseListeners(): void {
     for (const listener of this.leaseListeners) listener();
+  }
+  private notifyWorkListeners(): void {
+    for (const listener of this.workListeners) listener();
   }
   private idempotencyBoundaryConfirmed(eventId: string): boolean {
     const rows = this.effectRows.all(eventId) as EventRow[];

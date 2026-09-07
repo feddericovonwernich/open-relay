@@ -40,3 +40,22 @@ Result: 16 tests passed, 0 failed.
 
 - The dispatcher deliberately keeps registrations and waiter state in memory; relay restart requires workers to register again, matching the scoped bearer-token design.
 - Process execution remains deferred to Task 6; Task 4 only preserves the private `acquireProcess` boundary.
+
+## Review follow-up
+
+- Added `Store.watchWork` and connected `Dispatcher` to post-commit acceptance notifications so compatible existing long polls wake immediately instead of waiting for timeout.
+- Added a focused acceptance-to-delivery regression covering a worker already blocked in `poll` before compatible work is accepted.
+
+Updated focused verification:
+
+```text
+node --test tests/dispatcher.test.ts
+```
+
+Result: 8 tests passed, 0 failed.
+
+```text
+npm run typecheck
+```
+
+Result: `tsc --noEmit` exited 0.

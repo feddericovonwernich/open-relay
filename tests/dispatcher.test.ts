@@ -77,6 +77,20 @@ test("registration changes wake blocked polling", async () => {
   assert.equal(delivery?.workerId, "worker:compatible");
 });
 
+test("accepted compatible work wakes an existing poll", async () => {
+  const store = openStore(":memory:", clock);
+  store.installRevisions([revision]);
+  const credentials = new CredentialStore({ now: clock });
+  const dispatcher = new Dispatcher(store, credentials, { now: clock });
+  const registration = dispatcher.registerWorker(worker());
+  const pending = dispatcher.poll(registration, AbortSignal.timeout(100));
+  await Promise.resolve();
+  const accepted = store.accept({ producerId: "browser:new", idempotencyKey: "event:1", payload: { variant: "dark" }, revision });
+  const delivery = await pending;
+  assert.equal(delivery?.event.id, accepted.event.id);
+  assert.equal(delivery?.workerId, registration.workerId);
+});
+
 test("worker registration identity fences settlement", () => {
   const current = app();
   const registration = current.dispatcher.registerWorker(worker());

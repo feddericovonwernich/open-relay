@@ -60,6 +60,7 @@ export class Dispatcher {
     this.credentials = credentials;
     this.now = () => readNow(options.now ?? (() => Date.now()));
     this.pollTimeoutMs = options.pollTimeoutMs ?? 30_000;
+    this.store.watchWork?.(() => this.notifyWork());
   }
 
   registerWorker(capabilities: WorkerCapabilities): WorkerRegistration {
