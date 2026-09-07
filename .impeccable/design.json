@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-06T00:11:30Z",
+  "title": "Design System: Open Relay Presentation",
+  "extensions": {
+    "colorMeta": {
+      "ink": { "role": "neutral", "displayName": "Black Paper", "canonical": "#080807", "tonalRamp": ["#080807", "#161613", "#2d2c28", "#4c4943", "#716c63", "#9f988b", "#cec6b7", "#f4f0e6"] },
+      "ivory": { "role": "neutral", "displayName": "Warm Ivory", "canonical": "#f4f0e6", "tonalRamp": ["#26241f", "#444038", "#635e53", "#837d70", "#a59f92", "#c5beb1", "#e0dbd0", "#f4f0e6"] },
+      "kinpaku-gold": { "role": "primary", "displayName": "Kintsugi Signal", "canonical": "#d8b86a", "tonalRamp": ["#2d2209", "#4d3b13", "#70571f", "#92742f", "#b39345", "#d8b86a", "#ebd397", "#f8edcf"] },
+      "success-green": { "role": "tertiary", "displayName": "Settled Green", "canonical": "#8ad4ad", "tonalRamp": ["#10291c", "#1d4832", "#2c684a", "#428965", "#60aa82", "#8ad4ad", "#b9e8ce", "#e5f7ed"] },
+      "failure-red": { "role": "tertiary", "displayName": "Failure Clay", "canonical": "#e17b62", "tonalRamp": ["#32120d", "#572018", "#7c3025", "#a14535", "#c75e49", "#e17b62", "#eead9d", "#f8ded7"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Editorial Display", "purpose": "Projection-scale slide claims and diagram titles." },
+      "body": { "displayName": "Explanatory Body", "purpose": "Technical explanation and supporting narrative." },
+      "protocol": { "displayName": "Protocol Label", "purpose": "Endpoints, schema fields, state, timing, and measurements only." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "signal-travel", "value": "2.8s linear infinite", "purpose": "Moves one dashed signal along the opening data path; disabled by reduced motion." },
+      { "name": "navigation-settle", "value": "cubic-bezier(.22, 1, .36, 1)", "purpose": "Slide, rail, and progress state changes." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "560px" },
+      { "name": "presentation-mobile", "value": "900px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Circular Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Previous or next slide control with SVG arrow.",
+      "html": "<button class=\"ds-icon-button\" aria-label=\"Next slide\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><path d=\"M9 5l7 7-7 7\"></path></svg></button>",
+      "css": ".ds-icon-button{width:2.25rem;height:2.25rem;display:grid;place-items:center;border:1px solid rgba(244,240,230,.28);border-radius:999px;color:#f4f0e6;background:transparent}.ds-icon-button:hover{color:#080807;border-color:#d8b86a;background:#d8b86a}.ds-icon-button:focus-visible{outline:2px solid #f0d68f;outline-offset:4px}.ds-icon-button svg{width:1rem;height:1rem}"
+    },
+    {
+      "name": "Presentation Chrome",
+      "kind": "nav",
+      "description": "Fixed identity, counter, and control bar.",
+      "html": "<header class=\"ds-chrome\"><strong>Open Relay</strong><span>01 / 20</span></header>",
+      "css": ".ds-chrome{height:4.75rem;padding:0 clamp(1.25rem,4vw,4.75rem);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(244,240,230,.16);color:#f4f0e6;background:rgba(8,8,7,.94);font-family:Albert Sans,Arial,sans-serif}"
+    },
+    {
+      "name": "Code Panel",
+      "kind": "custom",
+      "refersTo": "code-panel",
+      "description": "High-density protocol and schema surface.",
+      "html": "<pre class=\"ds-code\"><code><b>POST</b> /v1/events</code></pre>",
+      "css": ".ds-code{margin:0;padding:1.35rem 1.5rem;overflow:auto;border:1px solid rgba(244,240,230,.28);border-radius:12px;background:#11110f;color:#f4f0e6;font:400 .82rem/1.75 SFMono-Regular,Consolas,monospace}.ds-code b{color:#f0d68f}"
+    },
+    {
+      "name": "Transport Map",
+      "kind": "custom",
+      "description": "Four-column ownership and wire-protocol diagram.",
+      "html": "<div class=\"ds-transport\"><div>Caller</div><div>Wire</div><div>Relay owner</div><div>Result</div></div>",
+      "css": ".ds-transport{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid rgba(244,240,230,.28);color:#f4f0e6;background:#080807}.ds-transport>div{padding:1rem;border-right:1px solid rgba(244,240,230,.16);font:400 .68rem SFMono-Regular,Consolas,monospace}.ds-transport>div:last-child{border-right:0}"
+    },
+    {
+      "name": "Database Table",
+      "kind": "custom",
+      "description": "Ruled SQLite schema diagram.",
+      "html": "<section class=\"ds-db\"><h3>events</h3><div><span>id</span><small>TEXT PK</small></div><div><span>state</span><small>TEXT</small></div></section>",
+      "css": ".ds-db{border:1px solid rgba(244,240,230,.28);background:#11110f;color:#f4f0e6}.ds-db h3{margin:0;padding:1rem;color:#f0d68f;border-bottom:1px solid #d8b86a;font:500 1.8rem Alumni Sans,Arial Narrow,sans-serif}.ds-db div{display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid rgba(244,240,230,.16);font:400 .68rem SFMono-Regular,Consolas,monospace}.ds-db small{color:#6e6a63}"
+    },
+    {
+      "name": "Agent Flow Table",
+      "kind": "custom",
+      "description": "Scrollable participant-by-time dataflow matrix.",
+      "html": "<div class=\"ds-flow\"><div>t0</div><div>Browser</div><div>Relay</div><div>SQLite</div><div>Harness</div></div>",
+      "css": ".ds-flow{min-width:52rem;display:grid;grid-template-columns:4rem repeat(4,minmax(10rem,1fr));border-top:1px solid rgba(244,240,230,.28);border-left:1px solid rgba(244,240,230,.16);color:#aaa499;background:#080807}.ds-flow>div{padding:.72rem .8rem;border-right:1px solid rgba(244,240,230,.16);border-bottom:1px solid rgba(244,240,230,.16);font:400 .66rem SFMono-Regular,Consolas,monospace}"
+    },
+    {
+      "name": "Responsibility Matrix",
+      "kind": "custom",
+      "description": "Four-owner matrix for meaning, contract, effects, and reliability.",
+      "html": "<div class=\"ds-responsibility\"><article>Meaning</article><article>Contract</article><article>Effects</article><article>Reliability</article></div>",
+      "css": ".ds-responsibility{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-block:1px solid rgba(244,240,230,.28);color:#f4f0e6;background:#080807}.ds-responsibility article{min-height:10rem;padding:1.2rem;border-right:1px solid rgba(244,240,230,.16);font:500 1.8rem Alumni Sans,Arial Narrow,sans-serif}.ds-responsibility article:last-child{border-right:0}"
+    },
+    {
+      "name": "Progress Line",
+      "kind": "custom",
+      "description": "Two-pixel viewport progress indicator animated by transform.",
+      "html": "<div class=\"ds-progress\"><span style=\"--progress:.55\"></span></div>",
+      "css": ".ds-progress{height:2px;background:rgba(244,240,230,.16)}.ds-progress span{display:block;width:100%;height:100%;background:#f0d68f;transform:scaleX(var(--progress));transform-origin:left;transition:transform .55s cubic-bezier(.22,1,.36,1)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Signal Desk",
+    "overview": "A technical switchboard printed by an editorial studio. Near-black paper holds warm ivory information; restrained gold identifies active paths, contracts, and decisive words. Diagrams are the explanatory surface, and ledger rules keep protocol material scannable.",
+    "keyCharacteristics": [
+      "Editorial scale paired with precise protocol labels.",
+      "Gold reserved for signals, active state, and architectural invariants.",
+      "Hairline structure instead of container-heavy cards.",
+      "Native HTML, CSS, and SVG diagrams with accessible text equivalents.",
+      "One moving signal path, disabled for reduced-motion preferences."
+    ],
+    "rules": [
+      { "name": "The Signal Rarity Rule", "body": "Gold identifies meaning or movement; it never fills generic decoration.", "section": "colors" },
+      { "name": "The Two-Voice Rule", "body": "Display type argues; body and protocol type prove.", "section": "typography" },
+      { "name": "The Flat Signal Rule", "body": "A state change alters line, fill, or text role—not elevation.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do give each slide one architectural claim and one proving diagram.",
+      "Do reserve monospace for actual protocol, schema, timing, and state data.",
+      "Do preserve content order across desktop and mobile.",
+      "Do keep dense diagrams horizontally scrollable when collapsing would destroy meaning.",
+      "Do use gold to expose direction, authority, or an invariant."
+    ],
+    "donts": [
+      "Don't replace diagrams with decorative cards or generic icon grids.",
+      "Don't use glow, gradient text, or shadows to imply technical importance.",
+      "Don't shrink labels below readable sizes to force a desktop matrix onto mobile.",
+      "Don't let motion become the only way to understand dataflow.",
+      "Don't introduce additional accent hues without a new semantic state."
+    ]
+  }
+}

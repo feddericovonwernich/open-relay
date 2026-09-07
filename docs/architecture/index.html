@@ -1,0 +1,1452 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080807">
+  <title>Open Relay — Architecture Review</title>
+  <meta name="description" content="Architecture presentation for an extensible local event relay with durable delivery and agent or process handlers.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600&family=Alumni+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #080807;
+      --ink-raised: #11110f;
+      --ivory: #f4f0e6;
+      --muted: #aaa499;
+      --faint: #6e6a63;
+      --gold: #d8b86a;
+      --gold-bright: #f0d68f;
+      --green: #8ad4ad;
+      --red: #e17b62;
+      --rule: rgba(244, 240, 230, .16);
+      --rule-strong: rgba(244, 240, 230, .28);
+      --display: "Alumni Sans", "Arial Narrow", sans-serif;
+      --body: "Albert Sans", Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --pad: clamp(1.25rem, 4vw, 4.75rem);
+      --ease: cubic-bezier(.22, 1, .36, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-snap-type: y mandatory; scroll-behavior: smooth; background: var(--ink); }
+    body {
+      margin: 0;
+      background: var(--ink);
+      color: var(--ivory);
+      font-family: var(--body);
+      font-size: 16px;
+      line-height: 1.55;
+      overflow-x: hidden;
+    }
+
+    ::selection { color: var(--ink); background: var(--gold-bright); }
+    :focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 4px; }
+    button { font: inherit; }
+    a { color: inherit; text-decoration-color: var(--gold); text-underline-offset: .24em; }
+
+    .skip-link {
+      position: fixed;
+      z-index: 100;
+      top: .75rem;
+      left: .75rem;
+      transform: translateY(-160%);
+      padding: .65rem .9rem;
+      color: var(--ink);
+      background: var(--gold-bright);
+    }
+    .skip-link:focus { transform: none; }
+
+    .chrome {
+      position: fixed;
+      z-index: 20;
+      inset: 0 0 auto;
+      height: 4.75rem;
+      padding: 0 var(--pad);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--rule);
+      background: rgba(8, 8, 7, .94);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .8rem;
+      font-family: var(--display);
+      font-size: 1.45rem;
+      font-weight: 500;
+      letter-spacing: .03em;
+    }
+    .brand-mark { width: 1.35rem; height: 1.35rem; color: var(--gold); }
+    .brand small {
+      margin-left: .35rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .62rem;
+      font-weight: 400;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .chrome-controls { display: flex; align-items: center; gap: .65rem; }
+    .counter {
+      min-width: 4.5rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .72rem;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+    }
+    .icon-button {
+      width: 2.25rem;
+      height: 2.25rem;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--rule-strong);
+      border-radius: 999px;
+      color: var(--ivory);
+      background: transparent;
+      cursor: pointer;
+      transition: color .25s ease, border-color .25s ease, background .25s ease;
+    }
+    .icon-button:hover { color: var(--ink); border-color: var(--gold); background: var(--gold); }
+    .icon-button:disabled { opacity: .3; cursor: not-allowed; }
+    .icon-button svg { width: 1rem; height: 1rem; }
+
+    .rail {
+      position: fixed;
+      z-index: 20;
+      top: 50%;
+      right: clamp(.75rem, 2vw, 2rem);
+      transform: translateY(-50%);
+      display: grid;
+      gap: .45rem;
+    }
+    .rail button {
+      position: relative;
+      width: 1.7rem;
+      height: 1rem;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .rail button::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: 0;
+      width: 1.55rem;
+      height: 1px;
+      background: var(--faint);
+      transform: scaleX(.45);
+      transform-origin: right;
+      transition: transform .35s var(--ease), background .35s ease;
+    }
+    .rail button:hover::after,
+    .rail button[aria-current="step"]::after { transform: scaleX(1); background: var(--gold-bright); }
+    .rail button span {
+      position: absolute;
+      right: 2rem;
+      top: 50%;
+      transform: translateY(-50%);
+      padding: .2rem .45rem;
+      color: var(--ivory);
+      background: var(--ink-raised);
+      font-family: var(--mono);
+      font-size: .64rem;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .rail button:hover span,
+    .rail button:focus-visible span { opacity: 1; }
+
+    .progress {
+      position: fixed;
+      z-index: 25;
+      inset: auto 0 0;
+      height: 2px;
+      background: var(--rule);
+    }
+    .progress span {
+      display: block;
+      height: 100%;
+      width: 100%;
+      background: var(--gold-bright);
+      transform: scaleX(.1);
+      transform-origin: left;
+      transition: transform .55s var(--ease);
+    }
+
+    .slide {
+      position: relative;
+      min-height: 100svh;
+      padding: clamp(7rem, 12vh, 9rem) max(calc(var(--pad) + 2.5rem), 8vw) clamp(4rem, 8vh, 7rem) var(--pad);
+      display: grid;
+      align-items: center;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+      isolation: isolate;
+      overflow: hidden;
+    }
+    .slide::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 4.75rem 0 0;
+      background: linear-gradient(115deg, rgba(216, 184, 106, .035), transparent 42%);
+      opacity: 0;
+      transition: opacity .8s ease;
+    }
+    .slide.is-active::before { opacity: 1; }
+    .slide-inner { width: min(100%, 88rem); min-width: 0; margin-inline: auto; }
+
+    .folio {
+      position: absolute;
+      left: var(--pad);
+      bottom: 1.55rem;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: .65rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1, h2, h3 { text-wrap: balance; }
+    h1 {
+      max-width: 10ch;
+      margin-bottom: 1.5rem;
+      font-family: var(--display);
+      font-size: clamp(4.2rem, 10vw, 8.8rem);
+      font-weight: 500;
+      line-height: .82;
+      letter-spacing: -.025em;
+    }
+    h2 {
+      max-width: 12ch;
+      margin-bottom: clamp(2rem, 5vh, 4rem);
+      font-family: var(--display);
+      font-size: clamp(3.5rem, 7.2vw, 7rem);
+      font-weight: 500;
+      line-height: .88;
+      letter-spacing: -.025em;
+    }
+    h3 {
+      margin-bottom: .8rem;
+      font-family: var(--display);
+      font-size: clamp(1.75rem, 3vw, 2.5rem);
+      font-weight: 500;
+      line-height: 1;
+    }
+    .lead {
+      max-width: 46rem;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.7vw, 1.32rem);
+      line-height: 1.65;
+    }
+    .gold { color: var(--gold-bright); }
+    .green { color: var(--green); }
+    .red { color: var(--red); }
+    .dim { color: var(--muted); }
+    .mono { font-family: var(--mono); }
+
+    .hero-grid,
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.04fr) minmax(25rem, .96fr);
+      gap: clamp(3rem, 8vw, 9rem);
+      align-items: center;
+    }
+
+    .thesis-rule {
+      width: min(20rem, 70%);
+      height: 1px;
+      margin: 2.5rem 0 1rem;
+      background: var(--gold);
+    }
+    .thesis-note { color: var(--muted); font-size: .83rem; letter-spacing: .03em; }
+
+    .signal-board {
+      position: relative;
+      min-height: 30rem;
+      border-top: 1px solid var(--rule-strong);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    .signal-board::before,
+    .signal-board::after {
+      content: "";
+      position: absolute;
+      left: 12%;
+      right: 12%;
+      height: 1px;
+      background: var(--rule);
+    }
+    .signal-board::before { top: 33.33%; }
+    .signal-board::after { top: 66.66%; }
+    .signal-station {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      width: 8rem;
+      aspect-ratio: 1;
+      border: 1px solid var(--rule-strong);
+      border-radius: 50%;
+      background: var(--ink);
+      text-align: center;
+    }
+    .signal-station strong { display: block; font-family: var(--display); font-size: 1.65rem; font-weight: 500; }
+    .signal-station small { color: var(--muted); font-family: var(--mono); font-size: .6rem; text-transform: uppercase; }
+    .station-browser { top: 1rem; left: 2%; }
+    .station-relay { top: 50%; left: 50%; width: 10rem; transform: translate(-50%, -50%); border-color: var(--gold); color: var(--gold-bright); }
+    .station-handler { right: 2%; bottom: 1rem; }
+    .signal-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+    .signal-svg path { fill: none; stroke: var(--rule-strong); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
+    .signal-svg .pulse { stroke: var(--gold-bright); stroke-width: 2; stroke-dasharray: 1 19; stroke-linecap: round; animation: signal 2.8s linear infinite; }
+    @keyframes signal { to { stroke-dashoffset: -20; } }
+
+    .decision-line {
+      display: grid;
+      grid-template-columns: 10rem 1fr;
+      gap: 2rem;
+      padding: 1.3rem 0;
+      border-top: 1px solid var(--rule);
+    }
+    .decision-line:last-child { border-bottom: 1px solid var(--rule); }
+    .decision-line strong { color: var(--gold-bright); font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+    .decision-line p { max-width: 56rem; margin: 0; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr 1fr;
+      gap: clamp(1rem, 2vw, 2rem);
+      align-items: stretch;
+    }
+    .lane {
+      padding: 1.25rem 0;
+      border-top: 1px solid var(--rule-strong);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    .lane-title { margin-bottom: 1.5rem; color: var(--muted); font-family: var(--mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
+    .node {
+      min-height: 5rem;
+      padding: 1rem 1.15rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      border-bottom: 1px solid var(--rule);
+    }
+    .node:first-of-type { border-top: 1px solid var(--rule); }
+    .node strong { font-family: var(--display); font-size: 1.55rem; font-weight: 500; }
+    .node code { color: var(--muted); font-family: var(--mono); font-size: .62rem; }
+    .relay-lane { padding: 1.25rem; border: 1px solid var(--gold); background: rgba(216, 184, 106, .045); }
+    .relay-lane .node { padding-inline: .4rem; }
+    .relay-lane .node strong { color: var(--gold-bright); }
+    .lane-foot { margin: 1.2rem 0 0; color: var(--muted); font-size: .78rem; }
+
+    .contract-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(22rem, .95fr);
+      gap: clamp(2rem, 6vw, 7rem);
+      align-items: start;
+    }
+    pre {
+      margin: 0;
+      padding: 1.35rem 1.5rem;
+      overflow: auto;
+      border: 1px solid var(--rule-strong);
+      border-radius: 12px;
+      background: #0d0d0b;
+      color: #ded9cd;
+      font-family: var(--mono);
+      font-size: clamp(.68rem, 1vw, .82rem);
+      line-height: 1.75;
+      tab-size: 2;
+    }
+    .code-key { color: var(--gold-bright); }
+    .code-type { color: var(--green); }
+    .code-comment { color: #817d75; }
+    .invariant {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--gold);
+      font-family: var(--display);
+      font-size: clamp(1.6rem, 2.8vw, 2.5rem);
+      line-height: 1.05;
+    }
+
+    .state-track {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-top: 2rem;
+      border-top: 1px solid var(--rule-strong);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    .state {
+      position: relative;
+      min-height: 13rem;
+      padding: 1.4rem 1.3rem;
+      border-right: 1px solid var(--rule);
+    }
+    .state:last-child { border-right: 0; }
+    .state::after {
+      content: "";
+      position: absolute;
+      top: 2.2rem;
+      right: -.28rem;
+      width: .55rem;
+      height: .55rem;
+      border-top: 1px solid var(--gold);
+      border-right: 1px solid var(--gold);
+      transform: rotate(45deg);
+      background: var(--ink);
+    }
+    .state:last-child::after { display: none; }
+    .state span { color: var(--gold-bright); font-family: var(--mono); font-size: .68rem; }
+    .state h3 { margin-top: 2.2rem; }
+    .state p { margin-bottom: 0; color: var(--muted); font-size: .86rem; }
+    .terminal-branches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1rem; }
+    .terminal-branches div { padding: .9rem 1rem; border: 1px solid var(--rule); font-size: .8rem; }
+
+    .adapter-split {
+      display: grid;
+      grid-template-columns: 1fr 1px 1fr;
+      gap: clamp(2rem, 5vw, 5rem);
+      align-items: stretch;
+    }
+    .adapter-divider { background: var(--rule-strong); }
+    .adapter-label { color: var(--gold-bright); font-family: var(--mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
+    .adapter-list { margin: 2rem 0 0; padding: 0; list-style: none; }
+    .adapter-list li { padding: .85rem 0; border-top: 1px solid var(--rule); color: var(--muted); }
+    .adapter-list li:last-child { border-bottom: 1px solid var(--rule); }
+    .protocol-strip { margin-top: 1.5rem; padding: .9rem 1rem; border: 1px solid var(--rule-strong); color: var(--green); font-family: var(--mono); font-size: .7rem; }
+
+    .sequence {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .sequence::before {
+      content: "";
+      position: absolute;
+      top: 1.15rem;
+      left: 2%;
+      right: 2%;
+      height: 1px;
+      background: var(--rule-strong);
+    }
+    .sequence-step { position: relative; padding-top: 3.4rem; }
+    .sequence-step::before {
+      content: "";
+      position: absolute;
+      z-index: 1;
+      top: .75rem;
+      left: 0;
+      width: .8rem;
+      height: .8rem;
+      border: 1px solid var(--gold);
+      border-radius: 50%;
+      background: var(--ink);
+    }
+    .sequence-step:nth-child(3)::before { background: var(--gold); }
+    .sequence-step code { color: var(--gold-bright); font-family: var(--mono); font-size: .65rem; }
+    .sequence-step h3 { margin: .65rem 0; font-size: 1.65rem; }
+    .sequence-step p { color: var(--muted); font-size: .8rem; }
+
+    .failure-matrix { width: 100%; border-collapse: collapse; }
+    .failure-matrix th,
+    .failure-matrix td { padding: 1rem .8rem; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+    .failure-matrix th { color: var(--muted); font-family: var(--mono); font-size: .66rem; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; }
+    .failure-matrix td:first-child { width: 24%; color: var(--ivory); font-weight: 600; }
+    .failure-matrix td:nth-child(2) { width: 29%; color: var(--gold-bright); font-family: var(--mono); font-size: .78rem; }
+    .failure-matrix td:last-child { color: var(--muted); }
+
+    .boundary-grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: clamp(3rem, 8vw, 8rem);
+      align-items: start;
+    }
+    .boundary-list { margin: 0; padding: 0; list-style: none; }
+    .boundary-list li { display: grid; grid-template-columns: 2rem 1fr; gap: 1rem; padding: 1rem 0; border-top: 1px solid var(--rule); }
+    .boundary-list li:last-child { border-bottom: 1px solid var(--rule); }
+    .boundary-list svg { width: 1.1rem; height: 1.1rem; margin-top: .15rem; color: var(--green); }
+    .boundary-list strong { display: block; margin-bottom: .25rem; }
+    .boundary-list span { color: var(--muted); font-size: .86rem; }
+    .trust-note { padding: 1.5rem; border: 1px solid var(--red); }
+    .trust-note h3 { color: var(--red); }
+    .trust-note p { margin-bottom: 0; color: var(--muted); }
+
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      border-top: 1px solid var(--rule-strong);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    .phase { min-height: 18rem; padding: 1.3rem; border-right: 1px solid var(--rule); }
+    .phase:last-child { border-right: 0; }
+    .phase-number { color: var(--gold-bright); font-family: var(--mono); font-size: .7rem; }
+    .phase h3 { margin: 2rem 0 1rem; font-size: 1.7rem; }
+    .phase p { color: var(--muted); font-size: .8rem; }
+    .phase small { display: block; margin-top: 1.4rem; color: var(--green); font-family: var(--mono); font-size: .62rem; line-height: 1.5; }
+
+    .verification-grid { display: grid; grid-template-columns: .85fr 1.15fr; gap: clamp(3rem, 8vw, 8rem); }
+    .check-list { margin: 0; padding: 0; list-style: none; counter-reset: checks; }
+    .check-list li { counter-increment: checks; position: relative; padding: 1.1rem 0 1.1rem 3.2rem; border-top: 1px solid var(--rule); }
+    .check-list li:last-child { border-bottom: 1px solid var(--rule); }
+    .check-list li::before { content: counter(checks, decimal-leading-zero); position: absolute; left: 0; color: var(--gold-bright); font-family: var(--mono); font-size: .68rem; }
+    .check-list span { display: block; color: var(--muted); font-size: .84rem; }
+    .exit-box { align-self: end; padding-top: 1.5rem; border-top: 1px solid var(--gold); }
+    .exit-box strong { display: block; max-width: 15ch; font-family: var(--display); font-size: clamp(2.4rem, 4vw, 4.2rem); font-weight: 500; line-height: .92; }
+    .exit-box p { max-width: 36rem; margin: 1.25rem 0 0; color: var(--muted); }
+
+    .finale { background: var(--gold); color: var(--ink); }
+    .finale::before { display: none; }
+    .finale h2 { max-width: 13ch; }
+    .finale .lead { color: rgba(8,8,7,.7); }
+    .finale .thesis-rule { background: var(--ink); }
+    .finale .folio { color: rgba(8,8,7,.55); }
+    .decision-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 3rem; background: rgba(8,8,7,.28); }
+    .decision-summary div { min-height: 9rem; padding: 1.2rem; background: var(--gold); }
+    .decision-summary small { font-family: var(--mono); font-size: .62rem; text-transform: uppercase; }
+    .decision-summary strong { display: block; margin-top: 1.2rem; font-family: var(--display); font-size: 1.8rem; font-weight: 500; line-height: 1; }
+
+
+    .transport-map {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-top: 1px solid var(--rule-strong);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    .transport-column { min-width: 0; border-right: 1px solid var(--rule); }
+    .transport-column:last-child { border-right: 0; }
+    .transport-head {
+      padding: .8rem 1rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .64rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--rule);
+    }
+    .transport-cell {
+      min-height: 7rem;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      border-bottom: 1px solid var(--rule);
+    }
+    .transport-cell:last-child { border-bottom: 0; }
+    .transport-cell strong { font-family: var(--display); font-size: 1.45rem; font-weight: 500; }
+    .transport-cell code { margin-top: .4rem; color: var(--gold-bright); font-family: var(--mono); font-size: .68rem; }
+    .transport-cell small { margin-top: .5rem; color: var(--muted); font-size: .74rem; }
+    .transport-cell.signal { background: rgba(216, 184, 106, .045); }
+    .transport-cell.signal strong::after {
+      content: "";
+      display: inline-block;
+      width: 2.5rem;
+      height: 1px;
+      margin-left: .75rem;
+      vertical-align: middle;
+      background: var(--gold);
+    }
+    .endpoint-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 1rem;
+      background: var(--rule);
+    }
+    .endpoint-strip div { padding: .8rem 1rem; background: var(--ink); color: var(--muted); font-size: .76rem; }
+    .endpoint-strip code { display: block; color: var(--green); font-family: var(--mono); font-size: .68rem; }
+
+    .envelope-stack { display: grid; gap: .7rem; }
+    .ownership-row {
+      display: grid;
+      grid-template-columns: 8rem 1fr;
+      gap: 1rem;
+      padding: .9rem 0;
+      border-top: 1px solid var(--rule);
+    }
+    .ownership-row:last-child { border-bottom: 1px solid var(--rule); }
+    .ownership-row code { color: var(--gold-bright); font-family: var(--mono); font-size: .68rem; }
+    .ownership-row p { margin: 0; color: var(--muted); font-size: .82rem; }
+
+    .database-map {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 5rem minmax(0, 1fr);
+      align-items: center;
+      gap: 1rem;
+    }
+    .db-table { border: 1px solid var(--rule-strong); background: #0d0d0b; }
+    .db-table h3 { margin: 0; padding: 1rem 1.2rem; color: var(--gold-bright); border-bottom: 1px solid var(--gold); }
+    .db-field {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1rem;
+      padding: .55rem 1.2rem;
+      border-bottom: 1px solid var(--rule);
+      font-family: var(--mono);
+      font-size: .66rem;
+    }
+    .db-field:last-child { border-bottom: 0; }
+    .db-field span:last-child { color: var(--faint); }
+    .db-link { display: grid; place-items: center; color: var(--gold); text-align: center; }
+    .db-link svg { width: 100%; height: 2rem; }
+    .db-link small { font-family: var(--mono); font-size: .6rem; }
+    .index-note { margin-top: 1rem; padding: .9rem 1rem; border: 1px solid var(--rule); color: var(--muted); font-family: var(--mono); font-size: .68rem; }
+
+    .lease-grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: clamp(2rem, 6vw, 6rem);
+      align-items: start;
+    }
+    .race {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .race-worker { border-top: 1px solid var(--rule-strong); }
+    .race-worker h3 { padding-top: 1rem; }
+    .race-step { padding: .75rem 0; border-top: 1px solid var(--rule); color: var(--muted); font-size: .8rem; }
+    .race-step code { display: block; margin-bottom: .25rem; color: var(--gold-bright); font-family: var(--mono); font-size: .65rem; }
+    .race-step.wins { color: var(--green); }
+    .race-step.loses { color: var(--red); }
+    .lease-law { grid-column: 1 / -1; padding: 1rem; border: 1px solid var(--gold); color: var(--ivory); font-size: .82rem; }
+
+    .flow-scroll { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; }
+    .flow-table {
+      display: grid;
+      grid-template-columns: 4.5rem repeat(4, minmax(0, 1fr));
+      border-top: 1px solid var(--rule-strong);
+      border-left: 1px solid var(--rule);
+    }
+    .flow-table > div { min-width: 0; padding: .72rem .8rem; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+    .flow-head { color: var(--muted); font-family: var(--mono); font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; }
+    .flow-time { color: var(--faint); font-family: var(--mono); font-size: .62rem; }
+    .flow-action { position: relative; color: var(--gold-bright); font-family: var(--mono); font-size: .66rem; }
+    .flow-action::after { content: ""; position: absolute; left: .8rem; right: -.8rem; bottom: .42rem; height: 1px; background: var(--gold); }
+    .flow-result { color: var(--green); font-family: var(--mono); font-size: .66rem; }
+    .flow-muted { color: var(--faint); font-size: .7rem; }
+
+    .pipe {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      align-items: center;
+      gap: 1rem;
+    }
+    .pipe-node {
+      min-height: 9rem;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      border-top: 1px solid var(--rule-strong);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    .pipe-node strong { font-family: var(--display); font-size: 1.45rem; font-weight: 500; }
+    .pipe-node code { margin-top: .55rem; color: var(--gold-bright); font-family: var(--mono); font-size: .64rem; }
+    .pipe-arrow { color: var(--gold); }
+    .pipe-arrow svg { width: 100%; height: 1rem; }
+    .protocol-rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.5rem; }
+    .protocol-rules div { padding: 1rem; border: 1px solid var(--rule); color: var(--muted); font-size: .78rem; }
+    .protocol-rules code { display: block; margin-bottom: .4rem; color: var(--green); font-family: var(--mono); font-size: .66rem; }
+
+    .replay-diagram {
+      display: grid;
+      grid-template-columns: .85fr 1.15fr;
+      gap: clamp(2rem, 6vw, 6rem);
+      align-items: start;
+    }
+    .cursor-track { border-top: 1px solid var(--rule-strong); }
+    .cursor-event { display: grid; grid-template-columns: 4rem 1fr; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid var(--rule); }
+    .cursor-event code { color: var(--gold-bright); font-family: var(--mono); font-size: .65rem; }
+    .cursor-event p { margin: 0; color: var(--muted); font-size: .8rem; }
+    .reconnect-box { padding: 1.2rem; border: 1px solid var(--gold); }
+    .reconnect-box h3 { color: var(--gold-bright); }
+    .reconnect-box ol { margin: 1rem 0 0; padding-left: 1.2rem; color: var(--muted); font-size: .82rem; }
+    .reconnect-box li + li { margin-top: .65rem; }
+
+    .responsibility {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-top: 1px solid var(--rule-strong);
+      border-bottom: 1px solid var(--rule-strong);
+    }
+    .responsibility article { min-height: 17rem; padding: 1.2rem; border-right: 1px solid var(--rule); }
+    .responsibility article:last-child { border-right: 0; }
+    .responsibility code { color: var(--gold-bright); font-family: var(--mono); font-size: .64rem; }
+    .responsibility h3 { margin-top: 1.8rem; }
+    .responsibility ul { margin: 0; padding-left: 1rem; color: var(--muted); font-size: .78rem; }
+    .responsibility li + li { margin-top: .55rem; }
+    .security-strip { margin-top: 1rem; padding: 1rem; border: 1px solid var(--red); color: var(--muted); font-size: .8rem; }
+    .security-strip strong { color: var(--red); }
+
+    .support-tables {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .support-table { padding: 1rem 1.2rem; border: 1px solid var(--rule); }
+    .support-table strong { display: block; color: var(--gold-bright); font-family: var(--display); font-size: 1.4rem; font-weight: 500; }
+    .support-table code { display: block; margin-top: .45rem; color: var(--muted); font-family: var(--mono); font-size: .64rem; line-height: 1.6; }
+
+    .context-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: clamp(2rem, 6vw, 6rem);
+      align-items: start;
+    }
+    .trust-stack { border-top: 1px solid var(--rule-strong); }
+    .trust-layer { display: grid; grid-template-columns: 8rem 1fr; gap: 1rem; padding: .85rem 0; border-bottom: 1px solid var(--rule); }
+    .trust-layer code { color: var(--gold-bright); font-family: var(--mono); font-size: .66rem; }
+    .trust-layer p { margin: 0; color: var(--muted); font-size: .8rem; }
+    .trust-layer.untrusted code { color: var(--red); }
+    .capability-gate { margin-top: 1rem; padding: 1rem; border: 1px solid var(--gold); color: var(--muted); font-size: .78rem; }
+
+    .effect-path {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 1rem;
+      align-items: stretch;
+    }
+    .effect-node { position: relative; min-height: 11rem; padding: 1rem; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule-strong); }
+    .effect-node:not(:last-child)::after { content: ""; position: absolute; top: 2rem; right: -.7rem; width: .55rem; height: .55rem; border-top: 1px solid var(--gold); border-right: 1px solid var(--gold); transform: rotate(45deg); background: var(--ink); }
+    .effect-node code { color: var(--gold-bright); font-family: var(--mono); font-size: .64rem; }
+    .effect-node h3 { margin: 1.5rem 0 .65rem; font-size: 1.55rem; }
+    .effect-node p { color: var(--muted); font-size: .76rem; }
+    .effect-branch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1rem; }
+    .effect-branch div { padding: .85rem 1rem; border: 1px solid var(--rule); color: var(--muted); font-size: .76rem; }
+    .effect-branch code { display: block; margin-bottom: .35rem; color: var(--green); font-family: var(--mono); font-size: .64rem; }
+    @media (max-width: 900px) {
+      html { scroll-snap-type: none; }
+      .chrome { height: 4rem; }
+      .brand small { display: none; }
+      .rail { display: none; }
+      .slide { min-height: auto; padding: 7rem var(--pad) 5rem; overflow: visible; }
+      .slide:first-of-type { min-height: 100svh; }
+      .slide::before { inset: 4rem 0 0; }
+      .hero-grid, .split, .contract-grid, .boundary-grid, .verification-grid { grid-template-columns: 1fr; gap: 3rem; }
+      .signal-board { min-height: 25rem; }
+      .architecture { grid-template-columns: 1fr; }
+      .relay-lane { order: -1; }
+      .state-track { grid-template-columns: 1fr 1fr; }
+      .state:nth-child(2) { border-right: 0; }
+      .state:nth-child(-n+2) { border-bottom: 1px solid var(--rule); }
+      .adapter-split { grid-template-columns: 1fr; }
+      .adapter-divider { height: 1px; }
+      .sequence { grid-template-columns: 1fr; gap: 0; }
+      .sequence::before { top: 0; bottom: 0; left: .38rem; width: 1px; height: auto; }
+      .sequence-step { padding: .1rem 0 1.6rem 2.5rem; }
+      .sequence-step::before { top: .3rem; }
+      .roadmap { grid-template-columns: 1fr 1fr; }
+      .phase { min-height: 13rem; border-bottom: 1px solid var(--rule); }
+      .phase:nth-child(even) { border-right: 0; }
+      .phase:last-child { grid-column: 1 / -1; border-bottom: 0; }
+      .decision-summary { grid-template-columns: 1fr; }
+      .decision-summary div { min-height: 6rem; }
+      .transport-map { grid-template-columns: 1fr 1fr; }
+      .transport-column:nth-child(2) { border-right: 0; }
+      .endpoint-strip { grid-template-columns: 1fr; }
+      .database-map { grid-template-columns: 1fr; }
+      .db-link svg { width: 4rem; transform: rotate(90deg); }
+      .lease-grid, .replay-diagram { grid-template-columns: 1fr; }
+      .pipe { grid-template-columns: 1fr; }
+      .pipe-node { min-height: 6rem; }
+      .pipe-arrow { width: 3rem; justify-self: center; transform: rotate(90deg); }
+      .protocol-rules { grid-template-columns: 1fr; }
+      .responsibility { grid-template-columns: 1fr 1fr; }
+      .responsibility article:nth-child(2) { border-right: 0; }
+      .responsibility article:nth-child(-n+2) { border-bottom: 1px solid var(--rule); }
+      .support-tables, .context-grid, .effect-path, .effect-branch { grid-template-columns: 1fr; }
+      .effect-node { min-height: auto; }
+      .effect-node:not(:last-child)::after { display: none; }
+    }
+
+    @media (max-width: 560px) {
+      :root { --pad: 1.1rem; }
+      .chrome-controls .counter { min-width: 3rem; }
+      h1 { font-size: clamp(4rem, 24vw, 6rem); }
+      h2 { font-size: clamp(3.2rem, 19vw, 5rem); }
+      .slide { padding-top: 6.5rem; }
+      .signal-board { min-height: 23rem; }
+      .signal-station { width: 6.6rem; }
+      .station-relay { width: 8rem; }
+      .decision-line { grid-template-columns: 1fr; gap: .35rem; }
+      .state-track, .terminal-branches, .roadmap { grid-template-columns: 1fr; }
+      .state, .phase { min-height: auto; border-right: 0; border-bottom: 1px solid var(--rule); }
+      .state::after { display: none; }
+      .failure-matrix, .failure-matrix tbody, .failure-matrix tr, .failure-matrix td { display: block; }
+      .failure-matrix thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      .failure-matrix tr { padding: 1rem 0; border-bottom: 1px solid var(--rule); }
+      .failure-matrix td { width: auto !important; padding: .3rem 0; border: 0; }
+      .transport-map, .responsibility, .race { grid-template-columns: 1fr; }
+      .transport-column, .responsibility article { border-right: 0; border-bottom: 1px solid var(--rule); }
+      .ownership-row { grid-template-columns: 1fr; gap: .3rem; }
+      .flow-table { min-width: 52rem; grid-template-columns: 4rem repeat(4, minmax(10rem, 1fr)); }
+      .trust-layer { grid-template-columns: 1fr; gap: .3rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+
+    @media print {
+      @page { size: landscape; margin: 0; }
+      html, body { background: var(--ink); print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .chrome, .rail, .progress, .skip-link { display: none; }
+      .slide { min-height: 100vh; break-after: page; padding: 5vw; }
+      .folio { left: 5vw; }
+    }
+  </style>
+</head>
+<body>
+  <!--
+    THESIS: Arbitrary event behavior travels through one fixed, durable lifecycle; this refuses the usual split between AI orchestration and plugin execution.
+    OWN-WORLD: Near-black editorial paper, kinpaku-gold signal paths, ivory type, ledger rules, and circular switchboard nodes.
+    STORY: Technical collaborators move from precedent to contract, delivery, extension boundaries, failure recovery, and a build sequence they can challenge.
+    FIRST VIEWPORT: An oversized proposition occupies the left half while Browser, Relay, and Handler stations carry a moving signal on the right; controls sit in a restrained fixed rail.
+    FORM: The Signal Desk, an editorial switchboard presentation; seed 33304319.
+    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+  -->
+  <a class="skip-link" href="#slide-1">Skip to presentation</a>
+
+  <header class="chrome" aria-label="Presentation controls">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.5"></circle><circle cx="12" cy="12" r="2.5"></circle><path d="M12 3.5V9.5M12 14.5V20.5M3.5 12H9.5M14.5 12H20.5"></path>
+      </svg>
+      Open Relay <small>Architecture review</small>
+    </div>
+    <div class="chrome-controls">
+      <button class="icon-button" id="previous" type="button" aria-label="Previous slide">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg>
+      </button>
+      <div class="counter" aria-live="polite"><span id="current-slide">01</span> / 20</div>
+      <button class="icon-button" id="next" type="button" aria-label="Next slide">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 5l7 7-7 7"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Slides">
+    <button type="button" data-slide="0" aria-label="Go to thesis" aria-current="step"><span>Thesis</span></button>
+    <button type="button" data-slide="1" aria-label="Go to architecture decision"><span>Decision</span></button>
+    <button type="button" data-slide="2" aria-label="Go to system map"><span>System map</span></button>
+    <button type="button" data-slide="3" aria-label="Go to transport topology"><span>Transport</span></button>
+    <button type="button" data-slide="4" aria-label="Go to event definition"><span>Definition</span></button>
+    <button type="button" data-slide="5" aria-label="Go to event envelope"><span>Envelope</span></button>
+    <button type="button" data-slide="6" aria-label="Go to storage model"><span>Storage</span></button>
+    <button type="button" data-slide="7" aria-label="Go to lifecycle"><span>Lifecycle</span></button>
+    <button type="button" data-slide="8" aria-label="Go to lease transaction"><span>Lease</span></button>
+    <button type="button" data-slide="9" aria-label="Go to handler adapters"><span>Adapters</span></button>
+    <button type="button" data-slide="10" aria-label="Go to AI execution boundary"><span>AI boundary</span></button>
+    <button type="button" data-slide="11" aria-label="Go to agent dataflow"><span>Agent flow</span></button>
+    <button type="button" data-slide="12" aria-label="Go to process dataflow"><span>Process flow</span></button>
+    <button type="button" data-slide="13" aria-label="Go to effect safety"><span>Effects</span></button>
+    <button type="button" data-slide="14" aria-label="Go to delivery sequence"><span>Delivery</span></button>
+    <button type="button" data-slide="15" aria-label="Go to observer replay"><span>Observe</span></button>
+    <button type="button" data-slide="16" aria-label="Go to recovery model"><span>Recovery</span></button>
+    <button type="button" data-slide="17" aria-label="Go to ownership boundaries"><span>Ownership</span></button>
+    <button type="button" data-slide="18" aria-label="Go to build plan"><span>Build plan</span></button>
+    <button type="button" data-slide="19" aria-label="Go to decision summary"><span>Summary</span></button>
+  </nav>
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+
+  <main id="presentation">
+    <section class="slide is-active" id="slide-1" aria-labelledby="title-1">
+      <div class="slide-inner hero-grid">
+        <div>
+          <h1 id="title-1">Any event.<br><span class="gold">One durable path.</span></h1>
+          <p class="lead">An extensible local relay where browsers and tools can emit new event types without redefining delivery, recovery, or trust.</p>
+          <div class="thesis-rule"></div>
+          <p class="thesis-note mono">Typed relay · at-least-once · agent + process handlers</p>
+        </div>
+        <div class="signal-board" role="img" aria-label="A browser sends an event through the relay to a handler">
+          <svg class="signal-svg" viewBox="0 0 500 500" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M70 85 C180 85 150 250 250 250 C350 250 320 415 430 415"></path>
+            <path class="pulse" d="M70 85 C180 85 150 250 250 250 C350 250 320 415 430 415"></path>
+          </svg>
+          <div class="signal-station station-browser"><div><strong>Emit</strong><small>Browser / CLI</small></div></div>
+          <div class="signal-station station-relay"><div><strong>Relay</strong><small>Persist · lease</small></div></div>
+          <div class="signal-station station-handler"><div><strong>Handle</strong><small>Agent / process</small></div></div>
+        </div>
+      </div>
+      <span class="folio">The proposition</span>
+    </section>
+
+    <section class="slide" id="slide-2" aria-labelledby="title-2">
+      <div class="slide-inner split">
+        <div>
+          <h2 id="title-2">Borrow the relay.<br><span class="gold">Open the vocabulary.</span></h2>
+          <p class="lead">Impeccable proves the transport pattern. Our change is to replace hard-coded event dispatch with a versioned registry and two explicit execution adapters.</p>
+        </div>
+        <div>
+          <div class="decision-line"><strong>Keep fixed</strong><p>Local helper, browser POST, SSE feedback, long-poll agent pickup, durable journal, and HMR-friendly source ownership.</p></div>
+          <div class="decision-line"><strong>Make extensible</strong><p>Event names, input and output schemas, timeouts, retry limits, instructions, and executable commands.</p></div>
+          <div class="decision-line"><strong>Refuse</strong><p>Distributed workers, fan-out topics, workflow DAGs, exactly-once side effects, and in-process third-party code.</p></div>
+        </div>
+      </div>
+      <span class="folio">Architecture decision</span>
+    </section>
+
+    <section class="slide" id="slide-3" aria-labelledby="title-3">
+      <div class="slide-inner">
+        <h2 id="title-3">The relay is the <span class="gold">boring center.</span></h2>
+        <div class="architecture" aria-label="Three-lane system architecture">
+          <div class="lane">
+            <div class="lane-title">Producers</div>
+            <div class="node"><strong>Browser SDK</strong><code>fetch + SSE</code></div>
+            <div class="node"><strong>Local CLI</strong><code>relay emit</code></div>
+            <p class="lane-foot">Both speak the same authenticated HTTP contract.</p>
+          </div>
+          <div class="lane relay-lane">
+            <div class="lane-title">Local relay</div>
+            <div class="node"><strong>Registry</strong><code>type + version</code></div>
+            <div class="node"><strong>Validator</strong><code>JSON Schema</code></div>
+            <div class="node"><strong>SQLite queue</strong><code>state + lease</code></div>
+            <div class="node"><strong>SSE projection</strong><code>snapshot + updates</code></div>
+          </div>
+          <div class="lane">
+            <div class="lane-title">Consumers</div>
+            <div class="node"><strong>AI harness</strong><code>long-poll</code></div>
+            <div class="node"><strong>Plugin process</strong><code>JSONL stdio</code></div>
+            <p class="lane-foot">One event occurrence has one configured handler.</p>
+          </div>
+        </div>
+      </div>
+      <span class="folio">System map</span>
+    </section>
+
+    <section class="slide" id="slide-transport" aria-labelledby="title-transport">
+      <div class="slide-inner">
+        <h2 id="title-transport">Three transports.<br><span class="gold">One source of truth.</span></h2>
+        <div class="transport-map" aria-label="Transport topology and endpoint ownership">
+          <div class="transport-column">
+            <div class="transport-head">Caller identity</div>
+            <div class="transport-cell"><strong>Producer</strong><code>producerId + idempotency key</code><small>Creates work under a scoped credential.</small></div>
+            <div class="transport-cell"><strong>Registered worker</strong><code>workerId + capabilities</code><small>Can lease only allowed definitions.</small></div>
+            <div class="transport-cell"><strong>Observer</strong><code>read-only token</code><small>Reads state; cannot lease or settle.</small></div>
+          </div>
+          <div class="transport-column">
+            <div class="transport-head">Wire</div>
+            <div class="transport-cell signal"><strong>HTTP POST</strong><code>/v1/events</code><small>Short request; idempotent durable acceptance.</small></div>
+            <div class="transport-cell signal"><strong>Long-poll POST</strong><code>/v1/agent/poll</code><small>Capability-matched work or timeout.</small></div>
+            <div class="transport-cell signal"><strong>SSE GET</strong><code>/v1/stream</code><small>Cursor-based snapshot and replay.</small></div>
+          </div>
+          <div class="transport-column">
+            <div class="transport-head">Relay owner</div>
+            <div class="transport-cell"><strong>Acceptance transaction</strong><code>type@version → revision digest</code><small>Validate and bind immutable semantics.</small></div>
+            <div class="transport-cell"><strong>Dispatcher + reaper</strong><code>agent poll · process loop · expiry timer</code><small>Match, lease, journal, and recover live work.</small></div>
+            <div class="transport-cell"><strong>Projection</strong><code>updates.sequence &gt; cursor</code><small>Durable catch-up; notification only wakes.</small></div>
+          </div>
+          <div class="transport-column">
+            <div class="transport-head">Result</div>
+            <div class="transport-cell"><strong>Queued event</strong><code>202 + stable eventId</code><small>Replay of the same key returns the original.</small></div>
+            <div class="transport-cell"><strong>Delivery</strong><code>workerId + leaseId + deadline</code><small>Fresh authority for one attempt.</small></div>
+            <div class="transport-cell"><strong>State update</strong><code>snapshot | progress | terminal</code><small>Advisory view of canonical SQLite state.</small></div>
+          </div>
+        </div>
+        <div class="endpoint-strip">
+          <div><code>POST /deliveries/:leaseId/renew</code>Extend bounded work only when worker and lease both match.</div>
+          <div><code>POST /deliveries/:leaseId/complete</code>Validate output; mutate state and append update atomically.</div>
+          <div><code>POST /events/:id/cancel</code>Persist cancellation; deliver it to the current worker.</div>
+        </div>
+      </div>
+      <span class="folio">Transport, identity, and endpoint topology</span>
+    </section>
+
+    <section class="slide" id="slide-4" aria-labelledby="title-4">
+      <div class="slide-inner contract-grid">
+        <div>
+          <h2 id="title-4">Behavior is versioned.<br><span class="gold">Meaning is immutable.</span></h2>
+          <p class="lead">At acceptance, the relay hashes the complete resolved definition and stores that revision on the event. Reloading the registry cannot change queued work; changing semantics requires a new version.</p>
+          <p class="invariant">Open vocabulary.<br><span class="gold">Content-addressed contract.</span></p>
+        </div>
+        <pre aria-label="Reviewed event definition"><code>{
+  <span class="code-key">"type"</span>: <span class="code-type">"ui.variant.requested"</span>,
+  <span class="code-key">"version"</span>: 2,
+  <span class="code-key">"inputSchema"</span>: <span class="code-type">"./schemas/request.json"</span>,
+  <span class="code-key">"outputSchema"</span>: <span class="code-type">"./schemas/result.json"</span>,
+  <span class="code-key">"effectPolicy"</span>: <span class="code-type">"manual-recovery"</span>,
+  <span class="code-key">"retry"</span>: {
+    <span class="code-key">"maxAttempts"</span>: 3,
+    <span class="code-key">"backoffMs"</span>: [1000, 5000, 30000]
+  },
+  <span class="code-key">"requires"</span>: {
+    <span class="code-key">"tools"</span>: [<span class="code-type">"workspace.read"</span>, <span class="code-type">"workspace.edit"</span>],
+    <span class="code-key">"structuredOutput"</span>: true,
+    <span class="code-key">"minContextTokens"</span>: 32000,
+    <span class="code-key">"maxInputTokens"</span>: 18000,
+    <span class="code-key">"maxOutputTokens"</span>: 4000
+  },
+  <span class="code-key">"handler"</span>: {
+    <span class="code-key">"kind"</span>: <span class="code-type">"agent"</span>,
+    <span class="code-key">"instructions"</span>: <span class="code-type">"./handlers/variant.md"</span>
+  }
+}</code></pre>
+      </div>
+      <span class="folio">Immutable extension contract</span>
+    </section>
+
+    <section class="slide" id="slide-envelope" aria-labelledby="title-envelope">
+      <div class="slide-inner">
+        <h2 id="title-envelope">Identity survives.<br><span class="gold">Authority expires.</span></h2>
+        <div class="contract-grid">
+          <pre aria-label="Corrected event and delivery envelope"><code>{
+  <span class="code-key">"event"</span>: {
+    <span class="code-key">"id"</span>: <span class="code-type">"018f…"</span>,
+    <span class="code-key">"producerId"</span>: <span class="code-type">"browser:local-7"</span>,
+    <span class="code-key">"idempotencyKey"</span>: <span class="code-type">"generate:card:42"</span>,
+    <span class="code-key">"type"</span>: <span class="code-type">"ui.variant.requested"</span>,
+    <span class="code-key">"version"</span>: 2,
+    <span class="code-key">"definitionRevision"</span>: <span class="code-type">"sha256:9ab…"</span>,
+    <span class="code-key">"payload"</span>: { <span class="code-comment">/* schema-valid, untrusted */</span> },
+    <span class="code-key">"correlationId"</span>: <span class="code-type">"observational-only"</span>
+  },
+  <span class="code-key">"delivery"</span>: {
+    <span class="code-key">"attempt"</span>: 2,
+    <span class="code-key">"workerId"</span>: <span class="code-type">"codex-local-1"</span>,
+    <span class="code-key">"leaseId"</span>: <span class="code-type">"random-per-attempt"</span>,
+    <span class="code-key">"leaseExpiresAt"</span>: <span class="code-type">"2026-09-05T…Z"</span>
+  }
+}</code></pre>
+          <div class="envelope-stack">
+            <div class="ownership-row"><code>producer + key</code><p>Uniquely identifies acceptance. A lost 202 can be retried safely.</p></div>
+            <div class="ownership-row"><code>event.id</code><p>Stable execution and effect-idempotency key across attempts.</p></div>
+            <div class="ownership-row"><code>revision</code><p>Freezes schema, instructions, handler, policy, and capability requirements.</p></div>
+            <div class="ownership-row"><code>worker + lease</code><p>Both must match for renew, progress, completion, failure, or cancellation acknowledgement.</p></div>
+            <div class="ownership-row"><code>correlation</code><p>Groups events for observation only. The initial system promises no cross-event ordering.</p></div>
+            <p class="invariant">Same accepted intent.<br><span class="gold">One durable event.</span></p>
+          </div>
+        </div>
+      </div>
+      <span class="folio">Acceptance and delivery identity</span>
+    </section>
+
+    <section class="slide" id="slide-storage" aria-labelledby="title-storage">
+      <div class="slide-inner">
+        <h2 id="title-storage">Four records carry <span class="gold">the guarantees.</span></h2>
+        <div class="database-map" aria-label="Canonical events and append-only updates tables">
+          <div class="db-table">
+            <h3>events</h3>
+            <div class="db-field"><span>id</span><span>TEXT PK</span></div>
+            <div class="db-field"><span>producer_id · idempotency_key</span><span>UNIQUE</span></div>
+            <div class="db-field"><span>definition_revision</span><span>TEXT FK</span></div>
+            <div class="db-field"><span>state · available_at</span><span>TEXT · INT</span></div>
+            <div class="db-field"><span>attempt · max_attempts</span><span>INT</span></div>
+            <div class="db-field"><span>worker_id · lease_id · expires_at</span><span>TEXT?</span></div>
+            <div class="db-field"><span>effect_policy · recovery_reason</span><span>TEXT?</span></div>
+            <div class="db-field"><span>result_json · error_json</span><span>TEXT?</span></div>
+          </div>
+          <div class="db-link">
+            <svg viewBox="0 0 100 20" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><path d="M0 10h92M82 3l10 7-10 7"></path></svg>
+            <small>same transaction</small>
+          </div>
+          <div class="db-table">
+            <h3>updates</h3>
+            <div class="db-field"><span>sequence</span><span>INTEGER PK</span></div>
+            <div class="db-field"><span>event_id</span><span>TEXT FK</span></div>
+            <div class="db-field"><span>kind</span><span>queued · leased · retry · cancel · recovery · terminal</span></div>
+            <div class="db-field"><span>attempt · worker_id · lease_id</span><span>TRACE</span></div>
+            <div class="db-field"><span>data_json · created_at</span><span>TEXT · INT</span></div>
+          </div>
+        </div>
+        <div class="support-tables">
+          <div class="support-table"><strong>definition_revisions</strong><code>digest PK · type · version · resolved definition · input schema · output schema · instruction bytes<br>Enough to rebuild historical delivery after reload.</code></div>
+          <div class="support-table"><strong>effect_intents</strong><code>event_id · effect_key · status · external_ref · updated_at<br>Every mutation commits with its effect update row.</code></div>
+        </div>
+        <div class="index-note">UNIQUE · events(producer_id, idempotency_key) &nbsp; QUEUE · events(state, available_at, lease_expires_at, created_at) &nbsp; REPLAY · updates(event_id, sequence)</div>
+      </div>
+      <span class="folio">Reviewed durable storage model</span>
+    </section>
+
+    <section class="slide" id="slide-5" aria-labelledby="title-5">
+      <div class="slide-inner">
+        <h2 id="title-5">Uncertainty is a <span class="gold">first-class state.</span></h2>
+        <div class="state-track" aria-label="Reviewed event lifecycle">
+          <div class="state"><span>accept transaction</span><h3>Queued</h3><p>Bound to immutable revision; available for a compatible worker.</p></div>
+          <div class="state"><span>acquire transaction</span><h3>Leased</h3><p>Worker and lease become the only temporary settlement authority.</p></div>
+          <div class="state"><span>renew · progress</span><h3>Running</h3><p>Bounded heartbeat extends work; every update is journaled.</p></div>
+          <div class="state"><span>schema + lease fence</span><h3>Terminal</h3><p>Completed, failed, or cancelled with durable evidence.</p></div>
+        </div>
+        <div class="effect-branch">
+          <div><code>retry_wait</code>Relay-owned backoff sets <span class="mono">available_at</span>; attempts do not burn immediately.</div>
+          <div><code>cancel_requested</code>Persist first; signal current worker; settlement waits for effect evidence.</div>
+          <div><code>recovery_required</code>External outcome is unknown. No automatic redelivery until an operator resolves it.</div>
+        </div>
+        <div class="terminal-branches">
+          <div><span class="green mono">completed</span> — output validates and effects are confirmed.</div>
+          <div><span class="red mono">failed</span> — deterministic failure or attempt budget exhausted.</div>
+          <div><span class="mono">cancelled</span> — worker confirms no consequential effect remains.</div>
+        </div>
+      </div>
+      <span class="folio">Reviewed event lifecycle</span>
+    </section>
+
+    <section class="slide" id="slide-lease" aria-labelledby="title-lease">
+      <div class="slide-inner">
+        <h2 id="title-lease">State and history <span class="gold">commit together.</span></h2>
+        <div class="lease-grid">
+          <pre aria-label="Atomic SQLite lease and journal transaction"><code><span class="code-key">BEGIN IMMEDIATE</span>;
+
+<span class="code-key">SELECT</span> id <span class="code-key">FROM</span> events
+<span class="code-key">WHERE</span> (
+    state = <span class="code-type">'queued'</span>
+    <span class="code-key">OR</span> (state = <span class="code-type">'retry_wait'</span>
+        <span class="code-key">AND</span> available_at &lt;= :now)
+  )
+  <span class="code-key">AND</span> definition_revision <span class="code-key">IN</span> :workerCaps
+<span class="code-key">ORDER BY</span> created_at
+<span class="code-key">LIMIT</span> 1;
+
+<span class="code-key">UPDATE</span> events <span class="code-key">SET</span>
+  state = <span class="code-type">'leased'</span>,
+  attempt = attempt + 1,
+  worker_id = :worker,
+  lease_id = :lease,
+  lease_expires_at = :deadline
+<span class="code-key">WHERE</span> id = :id;
+
+<span class="code-key">INSERT INTO</span> updates
+  (event_id, kind, attempt, worker_id, lease_id)
+<span class="code-key">VALUES</span>
+  (:id, <span class="code-type">'leased'</span>, :attempt, :worker, :lease);
+
+<span class="code-key">COMMIT</span>;</code></pre>
+          <div class="race" aria-label="Lease renewal and expiry policy">
+            <div class="race-worker">
+              <h3>Active attempt</h3>
+              <div class="race-step"><code>acquire</code>Capability match and journal entry commit atomically.</div>
+              <div class="race-step wins"><code>renew</code>Current worker and lease extend only up to the hard deadline.</div>
+              <div class="race-step"><code>settle</code>Output validation, state mutation, and terminal update share one transaction.</div>
+            </div>
+            <div class="race-worker">
+              <h3>Lost attempt</h3>
+              <div class="race-step"><code>retry-safe</code>Schedule <span class="mono">retry_wait</span> with relay-owned backoff.</div>
+              <div class="race-step loses"><code>effect unknown</code>Move to <span class="mono">recovery_required</span>; never lease blindly.</div>
+              <div class="race-step"><code>late worker</code>Wrong worker or lease receives 409 and cannot mutate state.</div>
+            </div>
+            <div class="lease-law"><span class="mono gold">AT-LEAST-ONCE EXECUTION</span> remains honest. Consequential effects require a durable downstream idempotency key or manual recovery on ambiguity.</div>
+          </div>
+        </div>
+      </div>
+      <span class="folio">Atomic lease and journal transaction</span>
+    </section>
+
+    <section class="slide" id="slide-6" aria-labelledby="title-6">
+      <div class="slide-inner">
+        <h2 id="title-6">Two adapters.<br><span class="gold">One guarded contract.</span></h2>
+        <div class="adapter-split">
+          <article>
+            <span class="adapter-label">handler.kind = agent</span>
+            <h3>Registered harness</h3>
+            <ul class="adapter-list">
+              <li>Registers <span class="mono">workerId</span>, allowed agent definitions, tools, structured-output support, token limits, and concurrency.</li>
+              <li>External long-poll can lease only <span class="mono">handler.kind = agent</span>; process work stays internal.</li>
+              <li>A concurrent control long-poll aborts model and tool signals when cancellation arrives.</li>
+              <li>Every renew, progress, cancellation acknowledgement, and settlement proves both worker and lease identity.</li>
+            </ul>
+            <div class="protocol-strip">worker credential → capability match → scoped lease → validated result</div>
+          </article>
+          <div class="adapter-divider" aria-hidden="true"></div>
+          <article>
+            <span class="adapter-label">handler.kind = process</span>
+            <h3>Relay-owned subprocess</h3>
+            <ul class="adapter-list">
+              <li>A relay-owned process loop acquires only process definitions; plugins never poll the queue.</li>
+              <li>Immutable delivery enters through stdin; bounded JSONL leaves through stdout.</li>
+              <li>Protocol violation, cancellation, and timeout all trigger TERM, grace period, then KILL.</li>
+              <li>Trusted local code receives an allow-listed environment and project-root working directory.</li>
+            </ul>
+            <div class="protocol-strip">spawn without shell → bounded stdio → effect evidence → atomic settle</div>
+          </article>
+        </div>
+      </div>
+      <span class="folio">Guarded handler adapters</span>
+    </section>
+
+    <section class="slide" id="slide-ai-boundary" aria-labelledby="title-ai-boundary">
+      <div class="slide-inner">
+        <h2 id="title-ai-boundary">Context is assembled by <span class="gold">trust level.</span></h2>
+        <div class="context-grid">
+          <div class="trust-stack" aria-label="Agent instruction precedence">
+            <div class="trust-layer"><code>1 · SYSTEM</code><p>Immutable harness policy: safety, secret handling, effect rules, and forbidden actions.</p></div>
+            <div class="trust-layer"><code>2 · DEFINITION</code><p>Content-addressed project instructions and output contract. May narrow tools, never expand system policy.</p></div>
+            <div class="trust-layer untrusted"><code>3 · CONTEXT</code><p>Retrieved files and documents carry provenance, byte counts, and explicit untrusted-data delimiters.</p></div>
+            <div class="trust-layer untrusted"><code>4 · PAYLOAD</code><p>Schema-valid does not mean trusted. Producer text cannot change policy or capabilities.</p></div>
+            <div class="trust-layer untrusted"><code>5 · OUTPUT</code><p>Model output is untrusted until schema, lease, effect evidence, and tool-policy checks pass.</p></div>
+          </div>
+          <div>
+            <pre aria-label="Worker capability registration"><code>{
+  <span class="code-key">"workerId"</span>: <span class="code-type">"codex-local-1"</span>,
+  <span class="code-key">"allowedDefinitions"</span>: [<span class="code-type">"ui.*"</span>],
+  <span class="code-key">"tools"</span>: [
+    <span class="code-type">"workspace.read"</span>,
+    <span class="code-type">"workspace.edit"</span>
+  ],
+  <span class="code-key">"structuredOutput"</span>: true,
+  <span class="code-key">"contextTokens"</span>: 64000,
+  <span class="code-key">"systemReserveTokens"</span>: 8000,
+  <span class="code-key">"maxConcurrent"</span>: 1
+}</code></pre>
+            <div class="capability-gate"><span class="mono gold">PRE-LEASE GATE</span> · match allowed definition, handler kind, tools, output mode, context budget, and active count before incrementing an attempt. No match means <span class="mono">blocked:no_capable_worker</span>.</div>
+            <div class="security-strip"><strong>The worker process is trusted local code.</strong> A shipped reference runtime enforces model tool calls, resolves secret handles, and redacts resolved values from tool results before model reuse or persistence. The relay does not claim to sandbox arbitrary code.</div>
+          </div>
+        </div>
+      </div>
+      <span class="folio">AI trust, context, and capability boundary</span>
+    </section>
+
+    <section class="slide" id="slide-agent-flow" aria-labelledby="title-agent-flow">
+      <div class="slide-inner">
+        <h2 id="title-agent-flow">Agent delivery,<br><span class="gold">with every fence visible.</span></h2>
+        <div class="flow-scroll" tabindex="0" aria-label="Scrollable reviewed agent delivery sequence">
+          <div class="flow-table">
+            <div class="flow-head">Step</div><div class="flow-head">Browser</div><div class="flow-head">Relay</div><div class="flow-head">SQLite</div><div class="flow-head">AI harness</div>
+            <div class="flow-time">t0</div><div class="flow-action">POST event + key →</div><div class="flow-muted">validate + bind revision</div><div class="flow-result">INSERT event + queued update</div><div></div>
+            <div class="flow-time">t1</div><div class="flow-result">← 202 stable eventId</div><div class="flow-muted">replay key returns original</div><div class="flow-muted">event durable</div><div></div>
+            <div class="flow-time">t2</div><div></div><div class="flow-muted">register + capability match</div><div></div><div class="flow-action">← worker caps + long-poll</div>
+            <div class="flow-time">t3</div><div></div><div class="flow-muted">acquireAgent atomically</div><div class="flow-result">UPDATE lease + INSERT update</div><div class="flow-result">delivery + scoped lease →</div>
+            <div class="flow-time">t4</div><div class="flow-result">← SSE progress</div><div class="flow-muted">verify worker + lease</div><div class="flow-result">INSERT progress</div><div class="flow-action">← renew / progress + control poll</div>
+            <div class="flow-time">t5</div><div></div><div class="flow-muted">cancel aborts model + tools</div><div class="flow-result">UPDATE terminal + INSERT update</div><div class="flow-action">← complete / fail / cancelled</div>
+            <div class="flow-time">t6</div><div class="flow-result">← SSE terminal</div><div class="flow-muted">release credential scope</div><div class="flow-muted">terminal evidence</div><div class="flow-action">next long-poll →</div>
+          </div>
+        </div>
+      </div>
+      <span class="folio">Reviewed agent-handler dataflow</span>
+    </section>
+
+    <section class="slide" id="slide-process-flow" aria-labelledby="title-process-flow">
+      <div class="slide-inner">
+        <h2 id="title-process-flow">A plugin is a process,<br><span class="gold">not a roommate.</span></h2>
+        <div class="pipe" aria-label="Reviewed executable plugin process dataflow">
+          <div class="pipe-node"><strong>Dispatcher</strong><code>acquireProcess + journal commit</code></div>
+          <div class="pipe-arrow"><svg viewBox="0 0 100 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="M0 6h94M86 1l8 5-8 5"></path></svg></div>
+          <div class="pipe-node"><strong>Child process</strong><code>immutable revision + effect key</code></div>
+          <div class="pipe-arrow"><svg viewBox="0 0 100 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="M0 6h94M86 1l8 5-8 5"></path></svg></div>
+          <div class="pipe-node"><strong>Relay settlement</strong><code>worker fence + atomic update</code></div>
+        </div>
+        <div class="protocol-rules">
+          <div><code>stdin · one immutable delivery</code>Protocol version, definition digest, scoped delivery, policy, context manifest, and effect idempotency key.</div>
+          <div><code>stdout · bounded JSONL</code><span class="mono">renew</span>, <span class="mono">progress</span>, effect evidence, then exactly one terminal message. Any protocol violation stops input and terminates the child.</div>
+          <div><code>control · one termination ladder</code>Malformed output, overflow, cancellation, or timeout sends SIGTERM, waits a grace period, then SIGKILL. Ambiguous effects enter recovery.</div>
+        </div>
+        <div class="security-strip"><strong>Isolation, not sandboxing.</strong> The process cannot corrupt relay memory, but installing it grants local-code trust. Use no shell, an allow-listed environment, bounded output, and a project-root working directory.</div>
+      </div>
+      <span class="folio">Reviewed executable-plugin dataflow</span>
+    </section>
+
+    <section class="slide" id="slide-effects" aria-labelledby="title-effects">
+      <div class="slide-inner">
+        <h2 id="title-effects">Retries stop where <span class="gold">effects begin.</span></h2>
+        <div class="effect-path" aria-label="Consequential effect protocol">
+          <div class="effect-node"><code>1 · CLASSIFY</code><h3>Policy</h3><p>Definition declares retry-safe, idempotency-required, or manual-recovery.</p></div>
+          <div class="effect-node"><code>2 · INTEND</code><h3>Effect key</h3><p>Persist event ID plus deterministic operation key before acting.</p></div>
+          <div class="effect-node"><code>3 · EXECUTE</code><h3>External call</h3><p>Pass the key downstream where supported; renew the lease while active.</p></div>
+          <div class="effect-node"><code>4 · CONFIRM</code><h3>Evidence</h3><p>Persist external reference or explicit proof that no effect occurred.</p></div>
+          <div class="effect-node"><code>5 · SETTLE</code><h3>Decision</h3><p>Complete, retry later, cancel, or stop in recovery_required.</p></div>
+        </div>
+        <div class="effect-branch">
+          <div><code>retry-safe</code>No durable external effect. Relay may schedule another attempt with backoff.</div>
+          <div><code>idempotency-required</code>Retry after expiry only when persisted intent proves the downstream system enforces the deterministic effect key.</div>
+          <div><code>manual-recovery</code>Unknown outcome never retries automatically; an operator inspects evidence and resolves state.</div>
+        </div>
+      </div>
+      <span class="folio">Effect safety and recovery policy</span>
+    </section>
+
+    <section class="slide" id="slide-7" aria-labelledby="title-7">
+      <div class="slide-inner">
+        <h2 id="title-7">Persist first.<br><span class="gold">Fence every transition.</span></h2>
+        <p class="lead">Acceptance, acquisition, retry, cancellation, recovery, and terminal settlement all mutate canonical state and append their ordered update in one transaction.</p>
+        <div class="sequence" aria-label="Reviewed end-to-end delivery sequence">
+          <div class="sequence-step"><code>01 · ACCEPT</code><h3>Deduplicate</h3><p>Resolve producer and key; validate payload; bind immutable definition revision.</p></div>
+          <div class="sequence-step"><code>02 · COMMIT</code><h3>Queue</h3><p>Insert event and queued update atomically; replayed key returns the same ID.</p></div>
+          <div class="sequence-step"><code>03 · MATCH</code><h3>Lease</h3><p>Select a compatible worker; commit worker, lease, attempt, deadline, and update.</p></div>
+          <div class="sequence-step"><code>04 · EXECUTE</code><h3>Evidence</h3><p>Assemble trusted context, enforce tools, renew, and record consequential effects.</p></div>
+          <div class="sequence-step"><code>05 · SETTLE</code><h3>Resolve</h3><p>Validate output and evidence; complete, retry_wait, cancel, fail, or require recovery.</p></div>
+        </div>
+      </div>
+      <span class="folio">Reviewed delivery sequence</span>
+    </section>
+
+    <section class="slide" id="slide-observe" aria-labelledby="title-observe">
+      <div class="slide-inner">
+        <h2 id="title-observe">Notifications wake.<br><span class="gold">The cursor catches up.</span></h2>
+        <div class="replay-diagram">
+          <div class="cursor-track" aria-label="Durable SSE update sequence">
+            <div class="cursor-event"><code>#104</code><p><span class="green">queued</span> — event and update committed together.</p></div>
+            <div class="cursor-event"><code>#105</code><p><span class="gold">leased</span> — worker, lease, attempt, and deadline recorded.</p></div>
+            <div class="cursor-event"><code>#106</code><p><span class="dim">progress</span> — current worker and lease verified.</p></div>
+            <div class="cursor-event"><code>#107</code><p><span class="dim">retry_scheduled</span> — cause and <span class="mono">available_at</span> persisted.</p></div>
+            <div class="cursor-event"><code>#108</code><p><span class="green">completed</span> — state and terminal evidence committed.</p></div>
+          </div>
+          <div>
+            <div class="reconnect-box">
+              <h3>Gap-free cursor protocol</h3>
+              <ol>
+                <li>Register a sequence-aware wake buffer before reading state.</li>
+                <li>Read canonical state and high-water mark <span class="mono">H</span> in one SQLite read transaction.</li>
+                <li>With a retained cursor, emit rows <span class="mono">(cursor, H]</span> and advance per row; without one, emit a canonical snapshot tagged <span class="mono">H</span> and set <span class="mono">cursor = H</span>.</li>
+                <li>Query <span class="mono">sequence &gt; cursor</span>, emit in order, advance the cursor, and deduplicate by sequence until caught up.</li>
+                <li>Wait for notification or heartbeat, then query again. The in-memory signal never carries correctness.</li>
+              </ol>
+            </div>
+            <p class="invariant">A missed wake costs latency.<br><span class="gold">A durable row cannot be missed.</span></p>
+          </div>
+        </div>
+      </div>
+      <span class="folio">Race-free observer projection</span>
+    </section>
+
+    <section class="slide" id="slide-8" aria-labelledby="title-8">
+      <div class="slide-inner">
+        <h2 id="title-8">Failures become <span class="gold">explicit decisions.</span></h2>
+        <table class="failure-matrix">
+          <thead><tr><th>Failure</th><th>Relay action</th><th>Recovery contract</th></tr></thead>
+          <tbody>
+            <tr><td>Lost acceptance response</td><td>Replay producer + key</td><td>Unique constraint returns the original event; no duplicate execution.</td></tr>
+            <tr><td>No compatible worker</td><td>blocked:no_capable_worker</td><td>Do not lease or burn an attempt; re-evaluate when capabilities change.</td></tr>
+            <tr><td>Retry-safe worker loss</td><td>retry_wait + available_at</td><td>Relay applies definition-owned backoff and journals the prior cause.</td></tr>
+            <tr><td>Unknown external effect</td><td>recovery_required</td><td>No blind retry. Operator verifies the effect and resolves canonical state.</td></tr>
+            <tr><td>Late or foreign settlement</td><td>409 · worker/lease mismatch</td><td>Neither stale workers nor producer credentials can mutate delivery state.</td></tr>
+            <tr><td>Registry reload</td><td>activate new revisions only</td><td>Queued events continue through their stored definition digest.</td></tr>
+            <tr><td>SSE disconnect</td><td>cursor query after every wake</td><td>Durable sequence replay closes the replay-to-tail handoff gap.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <span class="folio">Reviewed failure and recovery matrix</span>
+    </section>
+
+    <section class="slide" id="slide-ownership" aria-labelledby="title-ownership">
+      <div class="slide-inner">
+        <h2 id="title-ownership">Ownership is split by <span class="gold">failure domain.</span></h2>
+        <div class="responsibility">
+          <article><code>PRODUCER AUTHOR</code><h3>Meaning</h3><ul><li>Use a scoped producer credential.</li><li>Generate a stable idempotency key before POST.</li><li>Retry a lost response with the same key.</li><li>Treat SSE as observation, not completion authority.</li></ul></article>
+          <article><code>DEFINITION AUTHOR</code><h3>Contract</h3><ul><li>Version every semantic change.</li><li>Declare capabilities and token budgets.</li><li>Choose effect and retry policy.</li><li>Keep schemas and instructions deterministic.</li></ul></article>
+          <article><code>HANDLER AUTHOR</code><h3>Effects</h3><ul><li>Treat payload and retrieved context as untrusted.</li><li>Deduplicate effects by event ID.</li><li>Renew within the hard deadline.</li><li>Return structured evidence, never retry policy.</li></ul></article>
+          <article><code>RELAY OWNER</code><h3>Reliability</h3><ul><li>Scope producer, observer, worker, and admin credentials.</li><li>Commit state and journal together.</li><li>Fence worker and lease identity.</li><li>Stop uncertain effects in recovery.</li></ul></article>
+        </div>
+        <div class="security-strip"><strong>Local does not mean unauthenticated.</strong> Bind to loopback; issue role-scoped boot credentials; allow configured browser origins; keep secrets out of events; resolve definition paths beneath project root; spawn without a shell; cap request, context, stdout, stderr, progress, and result sizes.</div>
+      </div>
+      <span class="folio">Reviewed responsibility and trust boundaries</span>
+    </section>
+
+    <section class="slide" id="slide-9" aria-labelledby="title-9">
+      <div class="slide-inner">
+        <h2 id="title-9">Build guarantees<br><span class="gold">before adapters.</span></h2>
+        <div class="roadmap" aria-label="Reviewed implementation phases">
+          <div class="phase"><span class="phase-number">PHASE 0</span><h3>Acceptance</h3><p>Producer credentials, idempotency keys, immutable definition revisions, schema validation, and atomic queued updates.</p><small>PROOF: lost 202 replay returns one event</small></div>
+          <div class="phase"><span class="phase-number">PHASE 1</span><h3>Queue kernel</h3><p>Atomic leases, effects, and journals; live expiry reaper; durable backoff; cancellation; stale fencing; and recovery state.</p><small>PROOF: live worker loss cannot strand or repeat unknown effect</small></div>
+          <div class="phase"><span class="phase-number">PHASE 2</span><h3>Trusted worker</h3><p>Agent-only polling, full capability matching, token budgets, context provenance, cancellation control, enforced tools, and secret-result redaction.</p><small>PROOF: injected data cannot expand tools or leak a resolved secret</small></div>
+          <div class="phase"><span class="phase-number">PHASE 3</span><h3>Process + effects</h3><p>Process dispatch loop, bounded JSONL, universal kill escalation, atomic effect intents, downstream idempotency, and recovery.</p><small>PROOF: accepted process event terminates safely</small></div>
+          <div class="phase"><span class="phase-number">PHASE 4</span><h3>Observe + operate</h3><p>Atomic snapshot/high-water read, cursor SSE, browser SDK, recovery CLI, reconstructable revisions, and failure diagnostics.</p><small>PROOF: reconnect and reload preserve exact semantics</small></div>
+        </div>
+      </div>
+      <span class="folio">Reviewed implementation plan</span>
+    </section>
+
+    <section class="slide finale" id="slide-10" aria-labelledby="title-10">
+      <div class="slide-inner verification-grid">
+        <div>
+          <h2 id="title-10">Open behavior.<br>Closed invariants.</h2>
+          <p class="lead">Extensibility controls meaning and execution. Identity, immutable definitions, trust, effects, recovery, and delivery correctness remain relay-owned.</p>
+          <div class="thesis-rule"></div>
+          <div class="decision-summary">
+            <div><small>Runtime</small><strong>TypeScript + Node</strong></div>
+            <div><small>Delivery</small><strong>At least once</strong></div>
+            <div><small>Persistence</small><strong>Built-in SQLite</strong></div>
+          </div>
+        </div>
+        <div>
+          <ol class="check-list">
+            <li><strong>Acceptance invariant</strong><span>One producer and idempotency key resolve to one event and immutable definition revision.</span></li>
+            <li><strong>Transition invariant</strong><span>Canonical state and its ordered update commit or roll back together.</span></li>
+            <li><strong>Authority invariant</strong><span>Only the capability-matched worker holding the current lease may mutate delivery state.</span></li>
+            <li><strong>Effect invariant</strong><span>Unproven consequential work never retries when its external outcome is unknown.</span></li>
+            <li><strong>Context invariant</strong><span>Untrusted data cannot expand tools or policy; resolved secrets are redacted before model reuse or persistence.</span></li>
+            <li><strong>Observation invariant</strong><span>Every SSE client catches up from durable sequence rows; notifications carry no correctness.</span></li>
+          </ol>
+          <div class="exit-box">
+            <strong>First milestone: one accepted intent survives every retry boundary.</strong>
+            <p>Only after acceptance, journal, lease, effect, and recovery invariants hold do agent and process adapters join the system.</p>
+          </div>
+        </div>
+      </div>
+      <span class="folio">Reviewed decision summary</span>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const slides = [...document.querySelectorAll('.slide')];
+      const railButtons = [...document.querySelectorAll('.rail button')];
+      const previous = document.querySelector('#previous');
+      const next = document.querySelector('#next');
+      const currentLabel = document.querySelector('#current-slide');
+      const progress = document.querySelector('#progress-bar');
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let current = 0;
+
+      function update(index) {
+        current = Math.max(0, Math.min(slides.length - 1, index));
+        slides.forEach((slide, i) => slide.classList.toggle('is-active', i === current));
+        railButtons.forEach((button, i) => {
+          if (i === current) button.setAttribute('aria-current', 'step');
+          else button.removeAttribute('aria-current');
+        });
+        currentLabel.textContent = String(current + 1).padStart(2, '0');
+        progress.style.transform = `scaleX(${(current + 1) / slides.length})`;
+        previous.disabled = current === 0;
+        next.disabled = current === slides.length - 1;
+      }
+
+      function goTo(index) {
+        const target = Math.max(0, Math.min(slides.length - 1, index));
+        slides[target].scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+        update(target);
+      }
+
+      previous.addEventListener('click', () => goTo(current - 1));
+      next.addEventListener('click', () => goTo(current + 1));
+      railButtons.forEach((button) => button.addEventListener('click', () => goTo(Number(button.dataset.slide))));
+
+      addEventListener('keydown', (event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.target.closest('button, a, input, textarea, select')) return;
+        if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(event.key)) {
+          event.preventDefault();
+          goTo(current + 1);
+        } else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) {
+          event.preventDefault();
+          goTo(current - 1);
+        } else if (event.key === 'Home') {
+          event.preventDefault();
+          goTo(0);
+        } else if (event.key === 'End') {
+          event.preventDefault();
+          goTo(slides.length - 1);
+        }
+      });
+
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible) update(slides.indexOf(visible.target));
+      }, { threshold: [.35, .55, .75] });
+      slides.forEach((slide) => observer.observe(slide));
+      update(0);
+    })();
+  </script>
+</body>
+</html>
