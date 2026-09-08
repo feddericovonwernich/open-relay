@@ -97,6 +97,24 @@ test("retry uses attempt-indexed backoff and progress does not renew", () => {
   assert.equal(event.state, "retry_wait");
   assert.equal(event.availableAt, time.now() + 1_000);
 });
+test("retry availability notification observes committed state", () => {
+  const context = runningStore();
+  const observed: Array<{ state: string; availableAt: number }> = [];
+  const unwatch = context.store.watchWork?.(() => {
+    const event = context.store.getEvent(context.delivery.event.id);
+    if (event) observed.push({ state: event.state, availableAt: event.availableAt! });
+  });
+
+  const result = context.store.fail(authority(context.delivery), {
+    code: "temporarily_unavailable",
+    effectStatus: "none",
+  });
+  unwatch?.();
+
+  assert.equal(result.state, "retry_wait");
+  assert.deepEqual(observed, [{ state: "retry_wait", availableAt: result.availableAt }]);
+});
+
 
 test("renewal refuses a hard deadline", () => {
   const { store, time, delivery } = runningStore();

@@ -122,3 +122,62 @@ test("retry backoff wakes polling at availableAt", async () => {
   assert.ok(retried);
   assert.ok(Date.now() - startedAt < 200);
 });
+test("retry scheduling wakes a poll that was already waiting", async () => {
+  const retryRevision = {
+    ...revision,
+    digest: "retry-existing-waiter-revision",
+    definition: { ...revision.definition, retry: { ...revision.definition.retry, backoffMs: [25] } },
+  } as DefinitionRevision;
+  const store = openStore(":memory:");
+  store.installRevisions([retryRevision]);
+  const accepted = store.accept({
+    producerId: "retry:producer",
+    idempotencyKey: "retry:existing-waiter",
+    payload: { variant: "dark" },
+    revision: retryRevision,
+  });
+  const credentials = new CredentialStore();
+  const dispatcher = new Dispatcher(store, credentials, { pollTimeoutMs: 500 });
+  const workerA = dispatcher.registerWorker(worker({ workerId: "worker:a" }));
+  const workerB = dispatcher.registerWorker(worker({ workerId: "worker:b" }));
+
+  const first = await dispatcher.poll(workerA, AbortSignal.timeout(100));
+  assert.ok(first);
+  dispatcher.start(workerA, { eventId: first.event.id, workerId: first.workerId, leaseId: first.leaseId });
+
+  const waitingBeforeFailure = dispatcher.poll(workerB, AbortSignal.timeout(250));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const failedAt = Date.now();
+  dispatcher.fail(workerA, { eventId: first.event.id, workerId: first.workerId, leaseId: first.leaseId }, {
+    code: "temporarily_unavailable",
+    effectStatus: "none",
+  });
+
+  const retried = await waitingBeforeFailure;
+  assert.equal(retried?.event.id, accepted.event.id);
+  assert.ok(Date.now() - failedAt < 200, "retry waited for the normal poll timeout");
+});
+
+test("completion wakes a poll waiting for released worker capacity", async () => {
+  const store = openStore(":memory:");
+  store.installRevisions([revision]);
+  const first = store.accept({ producerId: "capacity:producer", idempotencyKey: "capacity:first", payload: { variant: "dark" }, revision });
+  const second = store.accept({ producerId: "capacity:producer", idempotencyKey: "capacity:second", payload: { variant: "light" }, revision });
+  const credentials = new CredentialStore();
+  const dispatcher = new Dispatcher(store, credentials, { pollTimeoutMs: 500 });
+  const registration = dispatcher.registerWorker(worker({ maxConcurrent: 1 }));
+
+  const delivery = await dispatcher.poll(registration, AbortSignal.timeout(100));
+  assert.equal(delivery?.event.id, first.event.id);
+  assert.ok(delivery);
+  dispatcher.start(registration, { eventId: delivery.event.id, workerId: delivery.workerId, leaseId: delivery.leaseId });
+
+  const waitingBeforeCompletion = dispatcher.poll(registration, AbortSignal.timeout(250));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const completedAt = Date.now();
+  dispatcher.complete(registration, { eventId: delivery.event.id, workerId: delivery.workerId, leaseId: delivery.leaseId }, { ok: true }, []);
+
+  const next = await waitingBeforeCompletion;
+  assert.equal(next?.event.id, second.event.id);
+  assert.ok(Date.now() - completedAt < 200, "capacity release waited for the normal poll timeout");
+});

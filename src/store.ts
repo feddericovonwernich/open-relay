@@ -414,7 +414,7 @@ class SqliteStore implements Store {
   }
 
   fail(authority: DeliveryAuthority, failure: FailureEvidence): StoredEvent {
-    return transaction(this.db, () => {
+    const result = transaction(this.db, () => {
       const row = this.authorize(authority, ["leased", "running"]);
       const eventId = String(row.id);
       const revision = this.getRevision(String(row.definition_revision));
@@ -443,10 +443,12 @@ class SqliteStore implements Store {
       this.insertUpdateRecord(eventId, { kind: updateKind, attempt, workerId: authority.workerId, leaseId: authority.leaseId, data: { ...failure, ...(state === "retry_wait" ? { availableAt } : {}) }, createdAt: now });
       return this.rowToEvent(this.findEvent.get(eventId) as EventRow);
     });
+    if (result.state === "retry_wait") this.notifyWorkListeners();
+    return result;
   }
 
   complete(authority: DeliveryAuthority, result: unknown, effects: EffectEvidence[]): StoredEvent {
-    return transaction(this.db, () => {
+    const event = transaction(this.db, () => {
       const row = this.authorize(authority, ["leased", "running"]);
       const revision = this.getRevision(String(row.definition_revision));
       if (!revision.validateOutput(result)) throw new StoreError("invalid_output", `result does not match ${revision.definition.type}@${revision.definition.version}`);
@@ -466,7 +468,11 @@ class SqliteStore implements Store {
       }
       return this.rowToEvent(this.findEvent.get(eventId) as EventRow);
     });
+    this.notifyWorkListeners();
+    return event;
   }
+
+
 
   recordEffectIntent(authority: DeliveryAuthority, effectKey: string, idempotencyBoundaryConfirmed: boolean): void {
     this.effectTransition(authority, ["leased", "running"], () => {
@@ -508,7 +514,7 @@ class SqliteStore implements Store {
   }
 
   acknowledgeCancel(authority: DeliveryAuthority, evidence: EffectEvidence[]): StoredEvent {
-    return transaction(this.db, () => {
+    const event = transaction(this.db, () => {
       const row = this.authorize(authority, ["cancel_requested"]);
       const eventId = String(row.id);
       const now = this.clock.now();
@@ -523,6 +529,8 @@ class SqliteStore implements Store {
       this.insertUpdateRecord(eventId, { kind: state, attempt: Number(row.attempt), workerId: authority.workerId, leaseId: authority.leaseId, data: { evidence }, createdAt: now });
       return this.rowToEvent(this.findEvent.get(eventId) as EventRow);
     });
+    this.notifyWorkListeners();
+    return event;
   }
 
   resolveRecovery(eventId: string, resolution: RecoveryResolution): StoredEvent {
