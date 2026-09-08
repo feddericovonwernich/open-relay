@@ -22,8 +22,8 @@ export interface SecretResolver {
 export interface WorkerTransport {
   control(authority: DeliveryAuthority, signal: AbortSignal): Promise<"cancel_requested" | "timeout">;
   cancelled(authority: DeliveryAuthority, evidence: readonly EffectEvidence[]): Promise<void>;
-  recordEffectIntent?(authority: DeliveryAuthority, effectKey: string, idempotencyBoundaryConfirmed: boolean): Promise<void>;
-  confirmEffect?(authority: DeliveryAuthority, effectKey: string, externalRef: string): Promise<void>;
+  recordEffectIntent(authority: DeliveryAuthority, effectKey: string, idempotencyBoundaryConfirmed: boolean): Promise<void>;
+  confirmEffect(authority: DeliveryAuthority, effectKey: string, externalRef: string): Promise<void>;
 }
 
 export type ModelEvent =
@@ -119,6 +119,12 @@ export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T exten
       tokenizer: options.tokenizer,
     });
     const tools = options.tools ?? options.toolAdapter;
+    if (typeof options.transport?.control !== "function" || typeof options.transport?.cancelled !== "function") {
+      throw new TypeError("worker transport methods are required");
+    }
+    if (typeof options.transport.recordEffectIntent !== "function" || typeof options.transport.confirmEffect !== "function") {
+      throw new TypeError("worker transport must persist effect evidence");
+    }
     if (!tools) throw new TypeError("a tool adapter is required");
     this.tools = tools;
     this.allowedTools = intersectToolPolicy(
@@ -225,8 +231,11 @@ export class TrustedWorkerRuntime<M extends ModelAdapter = ModelAdapter, T exten
     const effectKey = evidence.effectKey;
     const status = evidence.status ?? evidence.effectStatus;
     if (!effectKey) return;
-    if (status === "started") await this.options.transport.recordEffectIntent?.(authority, effectKey, evidence.idempotencyBoundaryConfirmed === true);
-    else if (status === "confirmed" && typeof evidence.externalRef === "string") await this.options.transport.confirmEffect?.(authority, effectKey, evidence.externalRef);
+    if (status === "started") {
+      await this.options.transport.recordEffectIntent(authority, effectKey, evidence.idempotencyBoundaryConfirmed === true);
+    } else if (status === "confirmed" && typeof evidence.externalRef === "string") {
+      await this.options.transport.confirmEffect(authority, effectKey, evidence.externalRef);
+    }
   }
 
   private async controlLoop(authority: DeliveryAuthority, controller: AbortController, cancel: () => void): Promise<void> {

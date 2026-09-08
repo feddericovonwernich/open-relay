@@ -63,7 +63,7 @@ test("runtime redacts resolved secrets before returning tool data to model", asy
   const runtime = new TrustedWorkerRuntime({
     model, tools, secretResolver: { resolve: () => new Map([["token", "secret-123"]]) },
     systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: ["workspace.read"], registeredTools: ["workspace.read"], systemTools: ["workspace.read"],
-    transport: { control: async () => "timeout", cancelled: async () => undefined },
+    transport: { control: async () => "timeout", cancelled: async () => undefined, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined },
     tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
   });
   const outcome = await runtime.run(delivery());
@@ -78,7 +78,7 @@ test("runtime blocks a model-requested tool outside the intersection", async () 
   const tools: ToolAdapter = { invoke: async () => { invoked = true; return {}; } };
   const runtime = new TrustedWorkerRuntime({
     model, tools, systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: ["workspace.read"], registeredTools: ["workspace.read", "shell.exec"], systemTools: ["workspace.read", "shell.exec"],
-    transport: { control: async () => "timeout", cancelled: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
+    transport: { control: async () => "timeout", cancelled: async () => undefined, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
   });
   const outcome = await runtime.run(delivery());
   assert.equal(outcome.status, "failed");
@@ -94,7 +94,7 @@ test("runtime cancellation aborts model and tool and acknowledges effects", asyn
   const tools: ToolAdapter = { invoke: async (_name, _input, _secrets, signal) => { await new Promise<void>((resolve) => signal.addEventListener("abort", () => { toolAborted = true; resolve(); }, { once: true })); return {}; } };
   const runtime = new TrustedWorkerRuntime({
     model, tools, systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: ["workspace.read"], registeredTools: ["workspace.read"], systemTools: ["workspace.read"],
-    transport: { control: async (_authority, signal) => { await new Promise<void>((resolve) => setImmediate(resolve)); if (signal.aborted) return "timeout"; return "cancel_requested"; }, cancelled: async () => { acknowledged = true; } },
+    transport: { control: async (_authority, signal) => { await new Promise<void>((resolve) => setImmediate(resolve)); if (signal.aborted) return "timeout"; return "cancel_requested"; }, cancelled: async () => { acknowledged = true; }, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined },
     tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
   });
   const outcome = await runtime.run(delivery());
@@ -125,6 +125,92 @@ test("runtime persists effect intent before confirming downstream effects", asyn
   assert.equal(outcome.status, "completed");
   assert.deepEqual(calls, ["intent:charge:true", "confirm:charge:ref-1"]);
 });
+test("runtime rejects transports without effect persistence", () => {
+  const transport = { control: async () => "timeout" as const, cancelled: async () => undefined };
+  assert.throws(() => new TrustedWorkerRuntime({
+    model: { async *generate() { yield { type: "complete", result: { ok: true } } as const; } },
+    tools: { invoke: async () => ({}) },
+    systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: [], registeredTools: [], systemTools: [],
+    transport: transport as never,
+    tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
+  }), new TypeError("worker transport must persist effect evidence"));
+});
+
+test("runtime awaits started-effect persistence before consuming the next model event", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let advanced = false;
+  const runtime = new TrustedWorkerRuntime({
+    model: { async *generate() {
+      yield { type: "effect", evidence: { effectKey: "charge", status: "started", idempotencyBoundaryConfirmed: true } } as const;
+      advanced = true;
+      yield { type: "complete", result: { ok: true } } as const;
+    } },
+    tools: { invoke: async () => ({}) },
+    systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: [], registeredTools: [], systemTools: [],
+    transport: {
+      control: async () => "timeout",
+      cancelled: async () => undefined,
+      recordEffectIntent: async () => { await pending; },
+      confirmEffect: async () => undefined,
+    },
+    tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
+  });
+  const running = runtime.run(delivery());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(advanced, false);
+  release();
+  assert.equal((await running).status, "completed");
+  assert.equal(advanced, true);
+});
+
+test("runtime awaits confirmed-effect persistence before completing", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let settled = false;
+  const runtime = new TrustedWorkerRuntime({
+    model: { async *generate() {
+      yield { type: "effect", evidence: { effectKey: "charge", status: "started", idempotencyBoundaryConfirmed: true } } as const;
+      yield { type: "effect", evidence: { effectKey: "charge", status: "confirmed", externalRef: "ref-1" } } as const;
+      yield { type: "complete", result: { ok: true } } as const;
+    } },
+    tools: { invoke: async () => ({}) },
+    systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: [], registeredTools: [], systemTools: [],
+    transport: {
+      control: async () => "timeout",
+      cancelled: async () => undefined,
+      recordEffectIntent: async () => undefined,
+      confirmEffect: async () => { await pending; },
+    },
+    tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
+  });
+  const running = runtime.run(delivery()).then((outcome) => { settled = true; return outcome; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  release();
+  assert.equal((await running).status, "completed");
+});
+
+test("runtime fails without appending evidence when persistence rejects", async () => {
+  const runtime = new TrustedWorkerRuntime({
+    model: { async *generate() {
+      yield { type: "effect", evidence: { effectKey: "charge", status: "started", idempotencyBoundaryConfirmed: true } } as const;
+    } },
+    tools: { invoke: async () => ({}) },
+    systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: [], registeredTools: [], systemTools: [],
+    transport: {
+      control: async () => "timeout",
+      cancelled: async () => undefined,
+      recordEffectIntent: async () => { throw new Error("persistence rejected"); },
+      confirmEffect: async () => undefined,
+    },
+    tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
+  });
+  const outcome = await runtime.run(delivery());
+  assert.equal(outcome.status, "failed");
+  assert.equal(outcome.code, "worker_error");
+  assert.deepEqual(outcome.effects, []);
+});
 
 test("runtime redacts secrets in object keys and every validation sink", async () => {
   const observed: unknown[] = [];
@@ -138,7 +224,7 @@ test("runtime redacts secrets in object keys and every validation sink", async (
   const runtime = new TrustedWorkerRuntime({
     model, tools, secretResolver: { resolve: () => new Map([["token", "secret-123"]]) },
     systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: ["workspace.read"], registeredTools: ["workspace.read"], systemTools: ["workspace.read"],
-    transport: { control: async () => "timeout", cancelled: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 300, maxOutputTokens: 20,
+    transport: { control: async () => "timeout", cancelled: async () => undefined, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 300, maxOutputTokens: 20,
     validateResult: (result) => { observed.push(result); return true; },
     onProgress: (data) => { observed.push(data); }, onLog: (data) => { observed.push(data); },
   });
@@ -153,7 +239,7 @@ test("runtime fails closed when system tool policy is absent", async () => {
     model: { async *generate() { yield { type: "tool_call", name: "workspace.read", input: {} } as const; } },
     tools: { invoke: async () => { invoked = true; return {}; } },
     systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: ["workspace.read"], registeredTools: ["workspace.read"],
-    transport: { control: async () => "timeout", cancelled: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 300, maxOutputTokens: 20,
+    transport: { control: async () => "timeout", cancelled: async () => undefined, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 300, maxOutputTokens: 20,
   });
   const outcome = await runtime.run(delivery());
   assert.equal(outcome.code, "tool_forbidden");
@@ -167,7 +253,7 @@ test("runtime sources policy, instructions, and budgets from trusted options", a
     tools: { invoke: async () => ({}) }, systemPolicy: "trusted policy", definitionInstructions: "trusted instructions",
     definitionTools: ["workspace.read"], registeredTools: ["workspace.read"], systemTools: ["workspace.read"],
     contextInput: contextInput({ systemPolicy: "attacker policy", definitionInstructions: "attacker instructions", allowedTools: ["shell.exec"], maxInputTokens: 1 }),
-    transport: { control: async () => "timeout", cancelled: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 300, maxOutputTokens: 20,
+    transport: { control: async () => "timeout", cancelled: async () => undefined, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined }, tokenizer: (text) => text.length, maxInputTokens: 300, maxOutputTokens: 20,
   });
   const outcome = await runtime.run(delivery());
   assert.equal(outcome.status, "completed");
@@ -180,7 +266,7 @@ test("runtime returns context budget failure as a worker outcome", async () => {
   const runtime = new TrustedWorkerRuntime({
     model: { async *generate() { yield { type: "complete", result: { ok: true } } as const; } },
     tools: { invoke: async () => ({}) }, systemPolicy: "policy", definitionInstructions: "instructions",
-    definitionTools: [], registeredTools: [], systemTools: [], transport: { control: async () => "timeout", cancelled: async () => undefined },
+    definitionTools: [], registeredTools: [], systemTools: [], transport: { control: async () => "timeout", cancelled: async () => undefined, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined },
     tokenizer: (text) => text.length, maxInputTokens: 5, maxOutputTokens: 20,
   });
   const outcome = await runtime.run(delivery());
@@ -198,7 +284,7 @@ test("runtime snapshots trusted policy and budget at construction", async () => 
     definitionTools: ["workspace.read"],
     registeredTools: ["workspace.read"],
     systemTools: ["workspace.read"],
-    transport: { control: async () => "timeout" as const, cancelled: async () => undefined },
+    transport: { control: async () => "timeout" as const, cancelled: async () => undefined, recordEffectIntent: async () => undefined, confirmEffect: async () => undefined },
     tokenizer: (text: string) => text.length,
     maxInputTokens: 300,
     maxOutputTokens: 20,

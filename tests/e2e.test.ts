@@ -7,6 +7,7 @@ import { CredentialStore } from "../src/auth.ts";
 import { Dispatcher } from "../src/dispatcher.ts";
 import { ProcessAdapter } from "../src/process-adapter.ts";
 import { loadRegistry, type DefinitionRevision, type Registry } from "../src/registry.ts";
+import { HttpWorkerTransport } from "../src/http-worker-transport.ts";
 import { TrustedWorkerRuntime, type ModelAdapter } from "../src/worker-runtime.ts";
 import type { Delivery, EffectEvidence } from "../src/protocol.ts";
 import { LeaseReaper } from "../src/reaper.ts";
@@ -67,6 +68,10 @@ async function testProject(options: { plugin?: string; effectPolicy?: string } =
       requires: { tools: [], structuredOutput: false, minContextTokens: 0, maxInputTokens: 0, maxOutputTokens: 0, maxPayloadBytes: 65_536 },
       handler: { kind: "process", command: options.plugin, args: [], env: ["PATH", "EFFECT_COUNT_FILE", "CRASH_DELAY_MS"] },
     }));
+  } else if (options.effectPolicy) {
+    const eventDefinition: Record<string, unknown> = JSON.parse(await readFile(join(root, "events", "ui-variant.v1.json"), "utf8"));
+    eventDefinition.effectPolicy = options.effectPolicy;
+    await writeFile(join(root, "events", "ui-variant.v1.json"), JSON.stringify(eventDefinition));
   }
   const time = clock();
   const registry = loadRegistry(root, "events");
@@ -254,13 +259,16 @@ test("correlated events preserve correlation IDs without promising cross-event o
 });
 
 test("agent cancellation control reports and settles every effect boundary", async () => {
-  const cases: readonly [string, EffectEvidence | undefined, string][] = [
-    ["before intent", undefined, "cancelled"],
-    ["after intent", { effectKey: "effect:42", status: "started", idempotencyBoundaryConfirmed: false }, "recovery_required"],
-    ["after external call", { effectKey: "effect:42", status: "unknown" }, "recovery_required"],
-    ["after confirmation", { effectKey: "effect:42", status: "confirmed", externalRef: "external:42" }, "recovery_required"],
+  const cases: readonly [string, readonly EffectEvidence[], string][] = [
+    ["before intent", [], "cancelled"],
+    ["after intent", [{ effectKey: "effect:42", status: "started", idempotencyBoundaryConfirmed: false }], "recovery_required"],
+    ["after external call", [{ effectKey: "effect:42", status: "unknown" }], "recovery_required"],
+    ["after confirmation", [
+      { effectKey: "effect:42", status: "started", idempotencyBoundaryConfirmed: false },
+      { effectKey: "effect:42", status: "confirmed", externalRef: "external:42" },
+    ], "recovery_required"],
   ];
-  for (const [boundary, effect, expected] of cases) {
+  for (const [boundary, effects, expected] of cases) {
     const project = await testProject();
     let relay: RelayHandle | undefined;
     try {
@@ -275,15 +283,14 @@ test("agent cancellation control reports and settles every effect boundary", asy
       const ready = new Promise<void>((resolve) => { readyResolve = resolve; });
       const model: ModelAdapter = {
         async *generate(_context, signal) {
-          if (effect) yield { type: "effect", evidence: effect } as const;
           readyResolve();
+          for (const evidence of effects) yield { type: "effect", evidence } as const;
           await new Promise<void>((resolve) => {
             if (signal.aborted) resolve();
             else signal.addEventListener("abort", () => resolve(), { once: true });
           });
         },
       };
-      let reportedEffects: readonly EffectEvidence[] | undefined;
       const runtime = new TrustedWorkerRuntime({
         model,
         tools: { invoke: async () => ({}) },
@@ -292,30 +299,73 @@ test("agent cancellation control reports and settles every effect boundary", asy
         definitionTools: [],
         registeredTools: [],
         systemTools: [],
-        transport: {
-          async control(_authority, signal) {
-            const response = await fetch(`${activeRelay.base}/v1/deliveries/${delivery.leaseId}/control`, { headers: { Authorization: `Bearer ${worker.token}` }, signal });
-            if (!response.ok) return "timeout";
-            return (await response.json() as { status: "cancel_requested" | "timeout" }).status;
-          },
-          async cancelled(authority, effects) {
-            reportedEffects = effects;
-            const response = await request(activeRelay.base, "POST", `/v1/deliveries/${authority.leaseId}/cancelled`, worker.token, { effects });
-            assert.equal(response.status, 200);
-          },
-        },
+        transport: new HttpWorkerTransport({ baseUrl: activeRelay.base, token: worker.token }),
         maxInputTokens: 200,
         maxOutputTokens: 20,
         tokenizer: (text) => text.length,
       });
-      const running = runtime.run(delivery);
+      const running = Promise.resolve().then(() => runtime.run(delivery));
       await ready;
+      const persistedKind = effects.some((entry) => entry.status === "confirmed") ? "effect_confirmed" : effects.some((entry) => entry.status === "started") ? "effect_started" : undefined;
+      for (let attempt = 0; persistedKind && attempt < 100 && !project.store.listUpdatesAfter(0, event.id).some((update) => update.kind === persistedKind); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (persistedKind) assert.ok(project.store.listUpdatesAfter(0, event.id).some((update) => update.kind === persistedKind));
       const cancelResponse = await request(relay.base, "POST", `/v1/events/${event.id}/cancel`, relay.producer, {});
       assert.equal(cancelResponse.status, 200);
       const outcome = await running;
       assert.equal(outcome.status, "cancelled");
-      assert.deepEqual(reportedEffects, effect ? [effect] : []);
-      assert.equal((await relay.get(event.id)).state, expected);
+      const eventAfter = await relay.get(event.id);
+      assert.equal(eventAfter.state, expected);
+      const update = project.store.listUpdatesAfter(0, event.id).find((entry) => entry.kind === expected);
+      const updateData = update?.data;
+      const evidence = updateData && typeof updateData === "object" && "evidence" in updateData ? updateData.evidence : undefined;
+      assert.deepEqual(evidence, effects);
+    } finally {
+      if (relay) await relay.killRelay();
+      await project.cleanup();
+    }
+  }
+});
+test("HTTP agent effect persistence controls idempotency-required retry classification", async () => {
+  for (const [boundary, expected] of [[true, "retry_wait"], [false, "recovery_required"]] as const) {
+    const project = await testProject({ effectPolicy: "idempotency-required" });
+    let relay: RelayHandle | undefined;
+    try {
+      relay = await project.startRelay(false);
+      const event = await relay.emit({ idempotencyKey: `effect-retry:${String(boundary)}` });
+      const registrationResponse = await request(relay.base, "POST", "/v1/workers/register", relay.server.adminToken, {
+        workerId: `e2e:effect-retry:${String(boundary)}`, allowedDefinitions: ["*"], tools: [], structuredOutput: true,
+        contextTokens: 8_000, systemReserveTokens: 0, maxConcurrent: 1,
+      });
+      const registration = await registrationResponse.json() as { token: string };
+      const deliveryResponse = await request(relay.base, "POST", "/v1/agent/poll", registration.token, {});
+      const delivery = await deliveryResponse.json() as Delivery;
+      const runtime = new TrustedWorkerRuntime({
+        model: {
+          async *generate() {
+            yield { type: "effect", evidence: { effectKey: "charge", status: "started", idempotencyBoundaryConfirmed: boundary } } as const;
+            yield { type: "fail", code: "temporarily_unavailable", effectStatus: "started" } as const;
+          },
+        },
+        tools: { invoke: async () => ({}) },
+        systemPolicy: "policy", definitionInstructions: "instructions", definitionTools: [], registeredTools: [], systemTools: [],
+        transport: new HttpWorkerTransport({ baseUrl: relay.base, token: registration.token }),
+        tokenizer: (text) => text.length, maxInputTokens: 200, maxOutputTokens: 20,
+      });
+      const outcome = await runtime.run(delivery);
+      assert.equal(outcome.status, "failed");
+      const failResponse = await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/fail`, registration.token, {
+        code: outcome.code, effectStatus: "started",
+      });
+      assert.equal(failResponse.status, 200);
+      const settled = await relay.waitForState(event.id, expected);
+      assert.equal(settled.state, expected);
+      const updates = project.store.listUpdatesAfter(0, event.id).map((update) => update.kind);
+      const effectStarted = updates.indexOf("effect_started");
+      const terminal = updates.findIndex((kind) => kind === expected);
+      assert.ok(effectStarted >= 0);
+      assert.ok(terminal > effectStarted);
     } finally {
       if (relay) await relay.killRelay();
       await project.cleanup();
@@ -329,6 +379,7 @@ test("ambiguous consequential effect survives a crashed worker restart without d
   try {
     first = await project.startRelay(false);
     const event = await first.emit({ idempotencyKey: "effect:42" });
+
     const revision = project.store.getRevision(event.definitionRevision);
     const delivery = project.store.acquireProcess({ workerId: "relay:process", maxConcurrent: 1 }, project.time.now());
     if (!delivery) throw new Error("effect event was not leased");
