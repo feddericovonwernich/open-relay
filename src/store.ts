@@ -443,7 +443,7 @@ class SqliteStore implements Store {
       this.insertUpdateRecord(eventId, { kind: updateKind, attempt, workerId: authority.workerId, leaseId: authority.leaseId, data: { ...failure, ...(state === "retry_wait" ? { availableAt } : {}) }, createdAt: now });
       return this.rowToEvent(this.findEvent.get(eventId) as EventRow);
     });
-    if (result.state === "retry_wait") this.notifyWorkListeners();
+    this.notifyWorkListeners();
     return result;
   }
 

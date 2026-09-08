@@ -25,3 +25,16 @@ The pre-fix regression tests were observed failing because existing waiters were
 
 - Project-wide validation was intentionally not run; it is delegated to the main agent after integration.
 - `graphify-out/` remains an unrelated pre-existing untracked directory and was not modified.
+
+## Final review fix wave
+
+- `Store.fail` now notifies work listeners after every successful transition (`retry_wait`, `failed`, or `recovery_required`) because each outcome releases the active worker lease.
+- Added `maxConcurrent: 1` dispatcher regressions proving pre-existing waiters wake and acquire the next queued event after failed and recovery-required outcomes.
+- Used explicit event IDs in capacity fixtures so queue-order assertions are deterministic when acceptance timestamps match.
+
+## Final verification
+
+- `node --test tests/dispatcher.test.ts tests/lifecycle.test.ts` — 32 passed.
+- `npm test` — 110 passed.
+- `npm run typecheck` — passed.
+- `npm run build` — passed.
