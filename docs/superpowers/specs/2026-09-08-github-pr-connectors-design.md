@@ -285,7 +285,13 @@ interface CompletionCandidate {
   artifactKind: "check_run" | "pull_request_review";
   artifactId: string;
   artifactHeadSha: string;
-  payload: PrAutomationCompleted;
+  artifact: {
+    name: string;
+    completion: "completed" | "submitted";
+    conclusion: string | null;
+    completedAt: string;
+    detailsUrl: string | null;
+  };
 }
 
 interface Recognizer {
