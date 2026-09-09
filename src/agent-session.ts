@@ -252,7 +252,7 @@ export async function pollAgent(options: PollAgentOptions): Promise<Delivery | {
     if (signal?.aborted) throw abortError();
     const remaining = deadline - Date.now();
     if (remaining <= 0) return { type: "timeout" };
-    const result = await pollOnce(transport, Math.min(30_000, remaining), signal, [options.runtime.token, registered.token]);
+    const result = await pollOnce(transport, remaining, signal, [options.runtime.token, registered.token]);
     if (isDeadline(result) || result === undefined) {
       if (Date.now() >= deadline) return { type: "timeout" };
       continue;
