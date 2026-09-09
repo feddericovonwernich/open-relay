@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RelayBrowserClient } from "../src/browser.ts";
-import { isCliEntrypoint, parseArgs, withoutSecrets } from "../src/cli.ts";
+import { isCliEntrypoint, parseArgs, runCli, withoutSecrets } from "../src/cli.ts";
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
@@ -69,6 +69,76 @@ test("CLI parser exposes emit version, JSON, and idempotency flags", () => {
     args: ["ui.variant.requested"],
     options: { version: "2", json: "{\"text\":\"A\"}", "idempotency-key": "go:42" },
   });
+});
+
+test("CLI argument parser supports nested agent poll and reply commands", () => {
+  assert.deepEqual(parseArgs(["agent", "poll", "worker-1", "--definitions", "example.requested@1", "--structured-output", "--timeout", "5000"]), {
+    command: "agent",
+    args: ["poll", "worker-1"],
+    options: { definitions: "example.requested@1", "structured-output": true, timeout: "5000" },
+  });
+  assert.deepEqual(parseArgs(["agent", "reply", "lease-1", "complete", "--json", "{\"result\":{\"ok\":true},\"effects\":[]}"]), {
+    command: "agent",
+    args: ["reply", "lease-1", "complete"],
+    options: { json: "{\"result\":{\"ok\":true},\"effects\":[]}" },
+  });
+});
+
+test("agent poll validates timeout bounds and preserves relay error output", async () => {
+  for (const timeout of ["0", "600001", "1.5"]) {
+    let stderr = "";
+    const code = await runCli(["agent", "poll", "worker-1", "--timeout", timeout], {
+      cwd: await mkdtemp(join(tmpdir(), "relay-cli-agent-")),
+      stdout: { write: () => undefined },
+      stderr: { write: (value) => { stderr += value; } },
+    });
+    assert.equal(code, 1);
+    assert.match(stderr, /^relay: timeout must be an integer from 1 through 600000\n$/);
+  }
+});
+
+test("agent poll prints exactly one JSON timeout line", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-agent-"));
+  await mkdir(join(root, ".relay"), { recursive: true });
+  await writeFile(join(root, ".relay", "runtime.json"), JSON.stringify({ port: 4_321, token: "admin-secret" }));
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (input): Promise<Response> => String(input).endsWith("/v1/workers/register")
+    ? jsonResponse({ workerId: "worker-1", token: "worker-secret" }, 201)
+    : jsonResponse(null);
+  let stdout = "";
+  let stderr = "";
+  try {
+    const code = await runCli(["agent", "poll", "worker-1", "--timeout", "1"], {
+      cwd: root,
+      stdout: { write: (value) => { stdout += value; } },
+      stderr: { write: (value) => { stderr += value; } },
+    });
+    assert.equal(code, 0);
+    assert.equal(stdout, "{\"type\":\"timeout\"}\n");
+    assert.equal(stderr, "");
+    assert.doesNotMatch(stdout, /admin-secret|worker-secret/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent reply rejects unknown actions through the standard relay error path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-agent-"));
+  await mkdir(join(root, ".relay"), { recursive: true });
+  await writeFile(join(root, ".relay", "runtime.json"), JSON.stringify({ port: 4_321, token: "admin-secret" }));
+  let stderr = "";
+  try {
+    const code = await runCli(["agent", "reply", "lease-1", "explode"], {
+      cwd: root,
+      stdout: { write: () => undefined },
+      stderr: { write: (value) => { stderr += value; } },
+    });
+    assert.equal(code, 1);
+    assert.equal(stderr, "relay: unknown agent action: explode\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 test("stream cancels the response body when the consumer stops early", async () => {
   let cancelled = false;

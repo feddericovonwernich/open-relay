@@ -71,3 +71,67 @@ test("HttpWorkerTransport rejects malformed control responses", async () => {
   const transport = new HttpWorkerTransport({ baseUrl: "http://relay.test", token: "secret-token", fetch });
   await assert.rejects(() => transport.control(authority, new AbortController().signal), HttpWorkerTransportError);
 });
+
+test("HttpWorkerTransport treats a null poll response as no delivery", async () => {
+  const fetch = async (): Promise<Response> => new Response("null", { status: 200 });
+  const transport = new HttpWorkerTransport({ baseUrl: "http://relay.test", token: "worker-secret", fetch });
+  assert.equal(await transport.poll(new AbortController().signal), undefined);
+});
+test("HttpWorkerTransport polls and sends every lease lifecycle payload unchanged", async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const delivery = {
+    event: { id: "event-1" },
+    attempt: 1,
+    workerId: "worker-1",
+    leaseId: "lease/1",
+    leaseExpiresAt: "2026-09-09T00:00:30.000Z",
+    hardDeadlineAt: "2026-09-09T00:10:00.000Z",
+  };
+  const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    calls.push({ url: String(input), init: init! });
+    return new Response(JSON.stringify(String(input).endsWith("/poll") ? delivery : { ok: true }), { status: 200 });
+  };
+  const signal = new AbortController().signal;
+  const transport = new HttpWorkerTransport({ baseUrl: "http://relay.test", token: "worker-secret", fetch });
+
+  assert.deepEqual(await transport.poll(signal), delivery);
+  await transport.start(authority);
+  await transport.renew(authority, "2026-09-09T00:01:00.000Z");
+  await transport.progress(authority, { phase: "working", count: 2 });
+  await transport.complete(authority, { reply: "done" }, [{ effectKey: "charge", status: "confirmed" }]);
+  await transport.fail(authority, { code: "worker_error", effectStatus: "unknown" });
+
+  assert.deepEqual(calls.map(({ url, init }) => ({
+    url,
+    method: init.method,
+    body: JSON.parse(String(init.body)),
+  })), [
+    { url: "http://relay.test/v1/agent/poll", method: "POST", body: {} },
+    { url: "http://relay.test/v1/deliveries/lease%2F1/start", method: "POST", body: {} },
+    { url: "http://relay.test/v1/deliveries/lease%2F1/renew", method: "POST", body: { leaseExpiresAt: "2026-09-09T00:01:00.000Z" } },
+    { url: "http://relay.test/v1/deliveries/lease%2F1/progress", method: "POST", body: { data: { phase: "working", count: 2 } } },
+    { url: "http://relay.test/v1/deliveries/lease%2F1/complete", method: "POST", body: { result: { reply: "done" }, effects: [{ effectKey: "charge", status: "confirmed" }] } },
+    { url: "http://relay.test/v1/deliveries/lease%2F1/fail", method: "POST", body: { code: "worker_error", effectStatus: "unknown" } },
+  ]);
+  assert.equal(calls[0]?.init.signal, signal);
+});
+
+test("HttpWorkerTransport rejects malformed poll deliveries without leaking bearer data", async () => {
+  const malformed = [
+    {},
+    { event: { id: 7 }, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: "expiry", hardDeadlineAt: "deadline" },
+    { event: { id: "event-1" }, workerId: 7, leaseId: "lease-1", leaseExpiresAt: "expiry", hardDeadlineAt: "deadline" },
+    { event: { id: "event-1" }, workerId: "worker-1", leaseId: 7, leaseExpiresAt: "expiry", hardDeadlineAt: "deadline" },
+    { event: { id: "event-1" }, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: 1, hardDeadlineAt: "deadline" },
+    { event: { id: "event-1" }, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: "expiry", hardDeadlineAt: 1 },
+  ];
+  for (const value of malformed) {
+    const fetch = async (): Promise<Response> => new Response(JSON.stringify(value), { status: 200 });
+    const transport = new HttpWorkerTransport({ baseUrl: "http://relay.test", token: "worker-secret", fetch });
+    await assert.rejects(() => transport.poll(new AbortController().signal), (error: unknown) => {
+      assert.ok(error instanceof HttpWorkerTransportError);
+      assert.doesNotMatch(error.message, /worker-secret/);
+      return true;
+    });
+  }
+});

@@ -91,6 +91,50 @@ test("accepted compatible work wakes an existing poll", async () => {
   assert.equal(delivery?.workerId, registration.workerId);
 });
 
+test("empty compatible polling acquires once and retries only after committed work notification", async () => {
+  const store = openStore(":memory:", clock);
+  store.installRevisions([revision]);
+  const credentials = new CredentialStore({ now: clock });
+  const dispatcher = new Dispatcher(store, credentials, { now: clock });
+  const registration = dispatcher.registerWorker(worker());
+  const acquire = store.acquireAgent.bind(store);
+  let attempts = 0;
+  store.acquireAgent = (capabilities, now) => {
+    attempts += 1;
+    return acquire(capabilities, now);
+  };
+  const pending = dispatcher.poll(registration, AbortSignal.timeout(100));
+  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  const accepted = store.accept({ producerId: "browser:new", idempotencyKey: "event:counter", payload: { variant: "dark" }, revision });
+  const result = await pending;
+  assert.equal(attempts, 2);
+  assert.equal(result?.event.id, accepted.event.id);
+});
+
+test("empty compatible polling stops on abort without another acquisition attempt", async () => {
+  const store = openStore(":memory:", clock);
+  store.installRevisions([revision]);
+  const credentials = new CredentialStore({ now: clock });
+  const dispatcher = new Dispatcher(store, credentials, { now: clock });
+  const registration = dispatcher.registerWorker(worker());
+  const acquire = store.acquireAgent.bind(store);
+  let attempts = 0;
+  store.acquireAgent = (capabilities, now) => {
+    attempts += 1;
+    return acquire(capabilities, now);
+  };
+  const controller = new AbortController();
+  const pending = dispatcher.poll(registration, controller.signal);
+  await Promise.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  controller.abort();
+  assert.equal(await pending, undefined);
+  assert.equal(attempts, 1);
+});
+
 test("worker registration identity fences settlement", () => {
   const current = app();
   const registration = current.dispatcher.registerWorker(worker());
