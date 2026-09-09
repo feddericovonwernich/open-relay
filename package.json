@@ -1,5 +1,6 @@
 {
   "name": "open-relay",
+  "version": "0.1.0",
   "description": "A local durable event relay for AI harnesses, subprocess plugins, and external connectors.",
   "license": "Apache-2.0",
   "repository": {
@@ -9,11 +10,13 @@
   "private": true,
   "bin": { "relay": "./dist/src/cli.js" },
   "type": "module",
+  "files": ["dist/src"],
   "engines": { "node": ">=22.19" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/*.test.ts"
+    "test": "node --test tests/*.test.ts",
+    "test:onboarding": "node --test tests/onboarding.test.ts"
   },
   "dependencies": { "ajv": "^8.17.1" },
   "devDependencies": {

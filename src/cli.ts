@@ -3,17 +3,13 @@ import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CredentialStore } from "./auth.ts";
-import { Dispatcher } from "./dispatcher.ts";
-import { ProcessAdapter } from "./process-adapter.ts";
 import { loadRegistry } from "./registry.ts";
-import { createRelayServer, type RelayServer } from "./server.ts";
-import { openStore } from "./store.ts";
 import { RelayBrowserClient } from "./browser.ts";
 import { GitHubClient } from "./connectors/github/client.ts";
 import { loadGitHubConnectorConfig } from "./connectors/github/config.ts";
 import { GitHubRelayEmitter } from "./connectors/github/emitter.ts";
 import { runGitHubConnector } from "./connectors/github/runner.ts";
+import { initializeProject } from "./init.ts";
 
 
 export type CliOptionValue = string | boolean;
@@ -145,6 +141,13 @@ async function scopedToken(runtime: Runtime, scope: "producer" | "observer"): Pr
 }
 
 async function startRelay(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "stdout">>): Promise<number> {
+  const [{ CredentialStore }, { Dispatcher }, { ProcessAdapter }, { createRelayServer }, { openStore }] = await Promise.all([
+    import("./auth.ts"),
+    import("./dispatcher.ts"),
+    import("./process-adapter.ts"),
+    import("./server.ts"),
+    import("./store.ts"),
+  ]);
   const root = resolve(io.cwd, option(parsed.options, "project-root", "project") ?? ".");
   const definitionsDir = option(parsed.options, "definitions") ?? (existsSync(join(root, ".relay", "events")) ? ".relay/events" : "events");
   const registry = loadRegistry(root, definitionsDir);
@@ -154,7 +157,7 @@ async function startRelay(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "
   const credentials = new CredentialStore();
   const dispatcher = new Dispatcher(store, credentials, { pollTimeoutMs: Number(option(parsed.options, "poll-timeout") ?? 30_000) });
   const runtimePath = await runtimeFile(root, parsed.options);
-  const server = createRelayServer({ store, registry, credentials, dispatcher, processAdapter: new ProcessAdapter(root), projectRoot: root, definitionsDir, runtimePath }) as RelayServer;
+  const server = createRelayServer({ store, registry, credentials, dispatcher, processAdapter: new ProcessAdapter(root), projectRoot: root, definitionsDir, runtimePath });
   const port = Number(option(parsed.options, "port") ?? 8787);
   await new Promise<void>((resolveListen, reject) => {
     server.once("error", reject);
@@ -187,6 +190,32 @@ async function recoveryList(runtime: Runtime, io: Required<Pick<CliIo, "stdout">
 
 async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "stdout">>): Promise<number> {
   const root = resolve(io.cwd, option(parsed.options, "project-root", "project") ?? ".");
+  if (parsed.options.help === true || parsed.command === "help") {
+    io.stdout.write([
+      "usage: relay <command> [options]",
+      "",
+      "commands:",
+      "  relay init [--github owner/repository]",
+      "  relay start | relay stop",
+      "  relay emit <type> --version <n> --json <payload>",
+      "  relay get <event-id> | relay cancel <event-id>",
+      "  relay connect github [--once] [--discover]",
+      "  relay recovery <list|resolve> | relay workers | relay reload",
+      "",
+    ].join("\n"));
+    return 0;
+  }
+  if (parsed.command === "init") {
+    const repository = parsed.options.github;
+    if (typeof repository === "boolean") throw new Error("--github requires owner/repository");
+    const created = await initializeProject(root, repository);
+    io.stdout.write(created.length === 0 ? "relay project already initialized\n" : `created ${created.length} relay files\n`);
+    io.stdout.write("next: relay start\n");
+    if (repository !== undefined) {
+      io.stdout.write("then: export GITHUB_TOKEN=... && relay connect github --once --discover\n");
+    }
+    return 0;
+  }
   if (parsed.command === "connect") {
     const connector = requiredArg(parsed.args, 0, "connector");
     if (connector !== "github") throw new Error(`unknown connector: ${connector}`);
@@ -289,7 +318,7 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
     printJson(io, withoutSecrets(await request(runtime, "POST", "/v1/admin/reload", {})));
     return 0;
   }
-  throw new Error("usage: relay start|stop|emit|get|cancel|recovery|workers|reload");
+  throw new Error("usage: relay init|start|stop|emit|get|cancel|recovery|workers|reload");
 }
 
 export async function runCli(argv: readonly string[], io: CliIo = {}): Promise<number> {

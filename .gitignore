@@ -1,6 +1,10 @@
 node_modules/
-dist/
+dist/*
+!dist/src/
+!dist/src/**
 coverage/
 .relay/
+!examples/**/.relay/
+!examples/**/.relay/**
 .superpowers/
 .worktrees/

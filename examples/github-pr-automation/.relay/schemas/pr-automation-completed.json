@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "provider": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "fullName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "fullName"
+      ],
+      "additionalProperties": false
+    },
+    "pullRequest": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer"
+        },
+        "url": {
+          "type": "string"
+        },
+        "headSha": {
+          "type": "string"
+        },
+        "baseRef": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "url",
+        "headSha",
+        "baseRef"
+      ],
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "check_run",
+            "pull_request_review"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "completion": {
+          "enum": [
+            "completed",
+            "submitted"
+          ]
+        },
+        "conclusion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "detailsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "name",
+        "completion",
+        "conclusion",
+        "completedAt",
+        "detailsUrl"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "provider",
+    "repository",
+    "pullRequest",
+    "artifact"
+  ],
+  "additionalProperties": false
+}

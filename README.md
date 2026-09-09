@@ -44,56 +44,82 @@ Event definitions decide **what** work means and which handler receives it. Open
 - Node.js 22.19 or newer
 - npm
 
-## Install from source
+## Install
 
 ```bash
-git clone https://github.com/feddericovonwernich/open-relay.git
-cd open-relay
-npm ci
-npm run build
-npm link
+npm install --global github:feddericovonwernich/open-relay
+relay --help
 ```
 
-## Quick start
+The GitHub installation uses the checked-in CLI build verified by CI. Open Relay is not published to the npm registry.
 
-Open Relay loads event definitions from `events/` by default, or `.relay/events/` when that directory exists.
+## Two-minute quick start
+
+Create a project:
+
+```bash
+mkdir relay-demo
+cd relay-demo
+relay init
+```
+
+Start the relay in that directory:
 
 ```bash
 relay start
 ```
 
-In another terminal:
+In another terminal, return to the same directory and emit an event:
 
 ```bash
-relay emit ui.variant.requested \
+cd relay-demo
+relay emit example.requested \
   --version 1 \
   --idempotency-key example-1 \
-  --json '{"variant":"dark"}'
+  --json '{"message":"hello"}'
 ```
 
-Read an event:
+Use the returned ID to read the durable event, then stop the service:
 
 ```bash
 relay get <event-id>
+relay stop
 ```
 
-Cancel or inspect recovery work:
+The example can remain queued until a compatible worker registers. Successful acceptance and retrieval prove the relay is installed and the generated definition is valid.
 
-```bash
-relay cancel <event-id>
-relay recovery list
-relay recovery resolve <event-id> --as completed --evidence '{"verified":true}'
+`relay init` creates `.relay/events`, `.relay/schemas`, and `.relay/handlers`. It is idempotent when generated files are unchanged and refuses to overwrite modified files. See [`examples/basic`](examples/basic) for the exact generated project.
+
+## Agent installation
+
+Agents should read [`AGENTS.md`](AGENTS.md), then follow the deterministic [`agent quick start`](docs/agent-quickstart.md). The required sequence is:
+
+```text
+verify Node -> install from GitHub -> initialize target repository
+-> inspect generated files -> start -> emit -> get -> stop -> report evidence
 ```
-
-See [`tests/fixtures/events/ui-variant.v1.json`](tests/fixtures/events/ui-variant.v1.json) for a complete event-definition example.
 
 ## GitHub PR connector
 
-The connector polls GitHub locally and emits normalized PR automation completions into the running relay.
+Initialize Open Relay for a repository:
 
 ```bash
+cd /path/to/target-repository
+relay init --github owner/repository
+relay start
+```
+
+In another terminal, provide a read-only GitHub token and discover provider identities:
+
+```bash
+cd /path/to/target-repository
 export GITHUB_TOKEN=github_pat_...
 relay connect github --config .relay/connectors/github.json --once --discover
+```
+
+The generated configuration pins the documented Copilot and Cursor Bugbot identities. SonarQube identity varies by installation, so it is intentionally unpinned for discovery. Add the observed Sonar app ID or slug to `.relay/connectors/github.json` before continuous polling:
+
+```bash
 relay connect github --config .relay/connectors/github.json
 ```
 
@@ -103,17 +129,15 @@ Terminology:
 - **Recognizer:** identifies a provider-specific completion artifact.
 - **Trigger:** maps a recognized completion to an Open Relay event type and version.
 
-The built-in recognizers use these completion signals:
-
 | Provider | Completion signal |
 |---|---|
 | SonarQube | Completed `SonarCloud Code Analysis` or `SonarQube Code Analysis` check with operator-pinned app identity |
 | GitHub Copilot | Submitted current-head pull-request review from the configured Copilot bot identity |
 | Cursor Bugbot | Completed `Cursor Bugbot` check from the Cursor GitHub App |
 
-The connector uses read-only GitHub permissions: **Checks**, **Pull requests**, and **Metadata**. Tokens stay in authorization headers and are excluded from events and logs.
+The connector requires read-only **Checks**, **Pull requests**, and **Metadata** permissions. Tokens stay in authorization headers and are excluded from configuration, events, and logs.
 
-See the [GitHub connector specification](docs/superpowers/specs/2026-09-08-github-pr-connectors-design.md) for configuration, normalized payloads, identity caveats, and provider sources.
+See [`examples/github-pr-automation`](examples/github-pr-automation) and the [GitHub connector specification](docs/superpowers/specs/2026-09-08-github-pr-connectors-design.md).
 
 ## Security model
 
@@ -133,9 +157,13 @@ See the [GitHub connector specification](docs/superpowers/specs/2026-09-08-githu
 ## Development
 
 ```bash
+git clone https://github.com/feddericovonwernich/open-relay.git
+cd open-relay
+npm ci
 npm test
 npm run typecheck
 npm run build
+npm run test:onboarding
 ```
 
 The test suite covers concurrent acceptance, definition immutability, lease races, retries, cancellation, effect recovery, process failure modes, SSE replay races, GitHub pagination/rate limits, provider recognition, connector restart reconciliation, and real loopback integration.

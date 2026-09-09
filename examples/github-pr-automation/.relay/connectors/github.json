@@ -1,0 +1,65 @@
+{
+  "connector": "github",
+  "apiBaseUrl": "https://api.github.com",
+  "apiVersion": "2026-03-10",
+  "tokenEnv": "GITHUB_TOKEN",
+  "pollIntervalMs": 15000,
+  "lookbackHours": 24,
+  "repositories": [
+    "owner/repository"
+  ],
+  "triggers": [
+    {
+      "id": "sonarqube-completed-v1",
+      "recognizer": "sonarqube",
+      "match": {
+        "checkNames": [
+          "SonarCloud Code Analysis",
+          "SonarQube Code Analysis"
+        ]
+      },
+      "emit": {
+        "type": "pr.automation.completed",
+        "version": 1
+      }
+    },
+    {
+      "id": "copilot-review-completed-v1",
+      "recognizer": "copilot-review",
+      "match": {
+        "userIds": [
+          175728472
+        ],
+        "appUrls": [
+          "https://github.com/apps/copilot-pull-request-reviewer"
+        ],
+        "logins": [
+          "copilot-pull-request-reviewer[bot]"
+        ]
+      },
+      "emit": {
+        "type": "pr.automation.completed",
+        "version": 1
+      }
+    },
+    {
+      "id": "cursor-bugbot-completed-v1",
+      "recognizer": "cursor-bugbot",
+      "match": {
+        "checkNames": [
+          "Cursor Bugbot"
+        ],
+        "appIds": [
+          1210556
+        ],
+        "appSlugs": [
+          "cursor"
+        ]
+      },
+      "emit": {
+        "type": "pr.automation.completed",
+        "version": 1
+      }
+    }
+  ]
+}
