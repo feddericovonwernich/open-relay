@@ -131,6 +131,7 @@ test("agent reply prints a successful control result as exactly one JSON line", 
   await writeFile(join(root, ".relay", "agent-leases", "bGVhc2UtMQ.json"), JSON.stringify({
     version: 1,
     relayId: createHash("sha256").update("admin-secret").digest("hex"),
+    workerId: "worker-1",
     leaseId: "lease-1",
     eventId: "event-1",
     token: "worker-secret",

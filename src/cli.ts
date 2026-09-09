@@ -10,6 +10,9 @@ import { loadGitHubConnectorConfig } from "./connectors/github/config.ts";
 import { GitHubRelayEmitter } from "./connectors/github/emitter.ts";
 import { runGitHubConnector } from "./connectors/github/runner.ts";
 import { initializeProject } from "./init.ts";
+import { pollAgent, replyAgent } from "./agent-session.ts";
+import type { AgentReplyAction } from "./agent-session.ts";
+import type { WorkerCapabilities } from "./protocol.ts";
 
 
 export type CliOptionValue = string | boolean;
@@ -139,6 +142,95 @@ async function scopedToken(runtime: Runtime, scope: "producer" | "observer"): Pr
   if (typeof token !== "string") throw new Error("relay did not issue a credential");
   return token;
 }
+function parseWorkerCapabilities(parsed: ParsedArgs, workerId: string, maxConcurrent = Number(option(parsed.options, "max-concurrent") ?? 1)): WorkerCapabilities {
+  return {
+    workerId,
+    allowedDefinitions: (option(parsed.options, "definitions") ?? "*").split(",").filter(Boolean),
+    tools: (option(parsed.options, "tools") ?? "").split(",").filter(Boolean),
+    structuredOutput: parsed.options["structured-output"] === true,
+    contextTokens: Number(option(parsed.options, "context-tokens") ?? 0),
+    systemReserveTokens: Number(option(parsed.options, "system-reserve") ?? 0),
+    maxConcurrent,
+  };
+}
+
+function parseAgentTimeout(parsed: ParsedArgs): number {
+  const value = parsed.options.timeout;
+  const timeout = typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600_000) {
+    throw new Error("timeout must be an integer from 1 through 600000");
+  }
+  return timeout;
+}
+
+const AGENT_REPLY_ACTIONS = [
+  "start",
+  "renew",
+  "progress",
+  "control",
+  "cancelled",
+  "complete",
+  "fail",
+  "effect-intent",
+  "effect-confirmation",
+] as const;
+
+function isAgentReplyAction(value: string): value is AgentReplyAction {
+  return (AGENT_REPLY_ACTIONS as readonly string[]).includes(value);
+}
+
+function parseReplyBody(parsed: ParsedArgs): JsonObject {
+  const value = parsed.options.json;
+  if (typeof value !== "string") throw new Error("agent reply requires --json <object>");
+  let body: unknown;
+  try {
+    body = JSON.parse(value);
+  } catch {
+    throw new Error("agent reply --json must be valid JSON object");
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("agent reply --json must be a JSON object");
+  }
+  return body as JsonObject;
+}
+
+async function agentCommand(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "stdout">>): Promise<number> {
+  const root = resolve(io.cwd, option(parsed.options, "project-root", "project") ?? ".");
+  const action = requiredArg(parsed.args, 0, "agent action");
+  if (action === "poll") {
+    const workerId = requiredArg(parsed.args, 1, "worker id");
+    const timeout = parsed.options.timeout === undefined ? 600_000 : parseAgentTimeout(parsed);
+    const runtime = await readRuntime(root, parsed.options);
+    const capabilities = parseWorkerCapabilities(parsed, workerId, 1);
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    process.once("SIGINT", abort);
+    process.once("SIGTERM", abort);
+    try {
+      const delivery = await pollAgent({ root, runtime, capabilities, timeoutMs: timeout, signal: controller.signal });
+      printJson(io, delivery);
+      return 0;
+    } finally {
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
+    }
+  }
+  if (action === "reply") {
+    const leaseId = requiredArg(parsed.args, 1, "lease id");
+    const replyAction = requiredArg(parsed.args, 2, "agent action");
+    if (!isAgentReplyAction(replyAction)) throw new Error(`unknown agent action: ${replyAction}`);
+    if ((replyAction === "start" || replyAction === "control") && parsed.options.json !== undefined) {
+      throw new Error(`--json is not supported for ${replyAction}`);
+    }
+    const body = replyAction === "start" || replyAction === "control" ? undefined : parseReplyBody(parsed);
+    const runtime = await readRuntime(root, parsed.options);
+    const result = await replyAgent({ root, runtime, leaseId, action: replyAction, body });
+    printJson(io, result);
+    return 0;
+  }
+  throw new Error(`unknown agent action: ${action}`);
+}
+
 
 async function startRelay(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "stdout">>): Promise<number> {
   const [{ CredentialStore }, { Dispatcher }, { ProcessAdapter }, { createRelayServer }, { openStore }] = await Promise.all([
@@ -201,6 +293,8 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
       "  relay get <event-id> | relay cancel <event-id>",
       "  relay connect github [--once] [--discover]",
       "  relay recovery <list|resolve> | relay workers | relay reload",
+      "  relay agent poll <worker-id> [options]",
+      "  relay agent reply <lease-id> <action> [--json <object>]",
       "",
     ].join("\n"));
     return 0;
@@ -254,6 +348,7 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
       process.off("SIGTERM", abort);
     }
   }
+  if (parsed.command === "agent") return agentCommand(parsed, io);
 
   if (parsed.command === "start") return startRelay(parsed, io);
   if (parsed.command === "stop") {
@@ -302,15 +397,8 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
     throw new Error(`unknown recovery action: ${action}`);
   }
   if (parsed.command === "workers") {
-    const value = await request(runtime, "POST", "/v1/workers/register", {
-      workerId: option(parsed.options, "id", "worker-id") ?? requiredArg(parsed.args, 0, "worker id"),
-      allowedDefinitions: (option(parsed.options, "definitions") ?? "*").split(",").filter(Boolean),
-      tools: (option(parsed.options, "tools") ?? "").split(",").filter(Boolean),
-      structuredOutput: parsed.options["structured-output"] === true,
-      contextTokens: Number(option(parsed.options, "context-tokens") ?? 0),
-      systemReserveTokens: Number(option(parsed.options, "system-reserve") ?? 0),
-      maxConcurrent: Number(option(parsed.options, "max-concurrent") ?? 1),
-    });
+    const workerId = option(parsed.options, "id", "worker-id") ?? requiredArg(parsed.args, 0, "worker id");
+    const value = await request(runtime, "POST", "/v1/workers/register", parseWorkerCapabilities(parsed, workerId));
     printJson(io, withoutSecrets(value));
     return 0;
   }
@@ -318,7 +406,7 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
     printJson(io, withoutSecrets(await request(runtime, "POST", "/v1/admin/reload", {})));
     return 0;
   }
-  throw new Error("usage: relay init|start|stop|emit|get|cancel|recovery|workers|reload");
+  throw new Error("usage: relay init|start|stop|emit|get|cancel|recovery|workers|reload|agent");
 }
 
 export async function runCli(argv: readonly string[], io: CliIo = {}): Promise<number> {
