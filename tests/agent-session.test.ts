@@ -58,7 +58,8 @@ test("pollAgent registers once, renews null polls silently, and persists one mod
   let registrations = 0;
   let polls = 0;
   let outstanding = 0;
-  const deferred = Promise.withResolvers<Response>();
+  const firstPoll = Promise.withResolvers<Response>();
+  const secondPoll = Promise.withResolvers<Response>();
   const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     if (url.endsWith("/v1/workers/register")) {
@@ -71,8 +72,7 @@ test("pollAgent registers once, renews null polls silently, and persists one mod
     polls += 1;
     outstanding += 1;
     try {
-      if (polls === 1) return response(null);
-      return await deferred;
+      return await (polls === 1 ? firstPoll.promise : secondPoll.promise);
     } finally {
       outstanding -= 1;
     }
@@ -82,11 +82,16 @@ test("pollAgent registers once, renews null polls silently, and persists one mod
     await nextTurn();
     await nextTurn();
     assert.equal(registrations, 1);
-    assert.equal(polls, 2);
+    assert.equal(polls, 1);
     assert.equal(outstanding, 1);
     assert.equal(await Promise.race([running.then(() => "settled"), Promise.resolve("pending")]), "pending");
 
-    deferred.resolve(response(delivery));
+    firstPoll.resolve(response(null));
+    await nextTurn();
+    assert.equal(polls, 2);
+    assert.equal(outstanding, 1);
+
+    secondPoll.resolve(response(delivery));
     const result = await running;
     assert.deepEqual(result, delivery);
     assert.doesNotMatch(JSON.stringify(result), /admin-secret|worker-secret/);

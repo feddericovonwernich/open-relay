@@ -63,3 +63,31 @@ These are the expected missing CLI contracts. The dispatcher behavior already sa
 ## Validation constraints
 
 No formatter, linter, build, onboarding test, project-wide suite, or unrelated test suite was run.
+
+## Round 1 focused follow-up
+
+Addressed the review findings by deferring the first HTTP poll before any retry can begin, asserting exactly one outstanding request while it is deferred, then resolving it to `null` and asserting the next poll starts with one outstanding request. Added a valid `agent reply ... control` CLI test that checks successful stdout is exactly `{"status":"timeout"}\n`.
+
+### `node --test tests/agent-session.test.ts`
+
+Still red at the missing production module boundary:
+
+```text
+ERR_MODULE_NOT_FOUND: Cannot find module .../src/agent-session.ts
+```
+
+### `node --test tests/cli.test.ts`
+
+Existing CLI tests passed. The four new agent CLI contract tests failed against the current implementation:
+
+```text
+relay: runtime file not found: .../.relay/runtime.json
+```
+
+for timeout validation; exit code `1` instead of `0` for the timeout output test; exit code `1` instead of `0` for the valid control-reply output test; and:
+
+```text
+relay: usage: relay init|start|stop|emit|get|cancel|recovery|workers|reload
+```
+
+instead of the unknown-agent-action error. These are missing CLI contracts, not test setup failures.

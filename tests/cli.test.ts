@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,6 +118,40 @@ test("agent poll prints exactly one JSON timeout line", async () => {
     assert.equal(stdout, "{\"type\":\"timeout\"}\n");
     assert.equal(stderr, "");
     assert.doesNotMatch(stdout, /admin-secret|worker-secret/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent reply prints a successful control result as exactly one JSON line", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-agent-"));
+  await mkdir(join(root, ".relay", "agent-leases"), { recursive: true });
+  await writeFile(join(root, ".relay", "runtime.json"), JSON.stringify({ port: 4_321, token: "admin-secret" }));
+  await writeFile(join(root, ".relay", "agent-leases", "bGVhc2UtMQ.json"), JSON.stringify({
+    version: 1,
+    relayId: createHash("sha256").update("admin-secret").digest("hex"),
+    leaseId: "lease-1",
+    eventId: "event-1",
+    token: "worker-secret",
+  }));
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init): Promise<Response> => {
+    assert.equal(String(input), "http://127.0.0.1:4321/v1/deliveries/lease-1/control");
+    assert.equal((init?.headers as Record<string, string>).Authorization, "Bearer worker-secret");
+    return jsonResponse({ status: "timeout" });
+  };
+  let stdout = "";
+  let stderr = "";
+  try {
+    const code = await runCli(["agent", "reply", "lease-1", "control"], {
+      cwd: root,
+      stdout: { write: (value) => { stdout += value; } },
+      stderr: { write: (value) => { stderr += value; } },
+    });
+    assert.equal(code, 0);
+    assert.equal(stdout, "{\"status\":\"timeout\"}\n");
+    assert.equal(stderr, "");
   } finally {
     globalThis.fetch = previousFetch;
     await rm(root, { recursive: true, force: true });
