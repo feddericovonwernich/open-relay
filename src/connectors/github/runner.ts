@@ -293,7 +293,7 @@ export async function runGitHubCycle(options: GitHubCycleOptions): Promise<Conne
       try {
         await runRepository(cycleOptions, client, repository, summary, states, signal, now, onFatal);
       } catch (error) {
-        onFatal(error);
+        if (!isAbort(error, signal)) onFatal(error);
       }
     });
   } finally {

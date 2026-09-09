@@ -168,6 +168,29 @@ test("fatal GitHub auth aborts sibling repository requests", async () => {
   assert.equal(siblingAborted, true);
 });
 
+test("caller abort returns an accumulated summary after in-flight requests stop", async () => {
+  const controller = new AbortController();
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const waitForAbort = async (signal?: AbortSignal): Promise<never> => {
+    markStarted();
+    await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+    throw new DOMException("aborted", "AbortError");
+  };
+  const client = {
+    listOpenPullRequests: async (_repository: string, signal?: AbortSignal) => waitForAbort(signal),
+    listRecentClosedPullRequests: async (_repository: string, _cutoff: number, signal?: AbortSignal) => waitForAbort(signal),
+    listCompletedCheckRuns: async () => [],
+    listReviews: async () => [],
+    getPullRequest: async () => pullRequest,
+  };
+  const running = runGitHubCycle({ config, client, signal: controller.signal });
+  await started;
+  controller.abort();
+  const result = await running;
+  assert.deepEqual(result.errors, []);
+});
+
 test("Relay credential rejection is fatal", async () => {
   await assert.rejects(runGitHubCycle({
     config,
