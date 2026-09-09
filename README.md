@@ -99,6 +99,30 @@ verify Node -> install from GitHub -> initialize target repository
 -> inspect generated files -> start -> emit -> get -> stop -> report evidence
 ```
 
+### Harness agent delivery
+
+Harness agents use a one-shot poll process rather than a `relay get` loop:
+
+```bash
+relay agent poll onboarding-agent --definitions example.requested@1 --structured-output --context-tokens 5000
+```
+
+Keep this command under harness process supervision. It prints nothing while parked, prints one raw JSON delivery when compatible work wakes it, and prints `{"type":"timeout"}` after ten minutes when no delivery arrives. When it exits, service that one delivery immediately and reply before polling again:
+
+```bash
+relay agent reply <lease-id> start
+relay agent reply <lease-id> complete --json '{"result":{"reply":"hello"},"effects":[]}'
+relay agent poll onboarding-agent --definitions example.requested@1 --structured-output --context-tokens 5000
+```
+
+The harness waits on process completion; it never loops `relay get` or consumes model turns while no event exists. The complete loop is:
+
+```text
+park one foreground/background poll -> receive one delivery -> reply start/progress/renew/effects -> reply complete/fail/cancelled -> start a fresh poll
+```
+
+There is no model or tool execution while the poll is parked, and the harness must never loop `relay get` to acquire work. A timeout means immediate re-poll. An active-delivery error means settle the existing lease before polling again. Worker credentials are kept only in ignored `.relay/agent-leases` files with mode `0600`; they never appear in delivery JSON, stdout, or argv. A Relay restart invalidates those authorities and hands unresolved work to the existing lease recovery path.
+
 ## GitHub PR connector
 
 Initialize Open Relay for a repository:

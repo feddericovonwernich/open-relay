@@ -53,13 +53,23 @@ function nextTurn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+async function waitFor(condition: () => boolean): Promise<void> {
+  while (!condition()) await nextTurn();
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => { resolve = promiseResolve; });
+  return { promise, resolve };
+}
+
 test("pollAgent registers once, renews null polls silently, and persists one mode-0600 authority", async () => {
   const actualRoot = await mkdtemp(join(tmpdir(), "relay-agent-session-"));
   let registrations = 0;
   let polls = 0;
   let outstanding = 0;
-  const firstPoll = Promise.withResolvers<Response>();
-  const secondPoll = Promise.withResolvers<Response>();
+  const firstPoll = deferred<Response>();
+  const secondPoll = deferred<Response>();
   const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     if (url.endsWith("/v1/workers/register")) {
@@ -79,16 +89,14 @@ test("pollAgent registers once, renews null polls silently, and persists one mod
   };
   try {
     const running = pollAgent({ root: actualRoot, runtime, capabilities, timeoutMs: 1_000, fetch });
-    await nextTurn();
-    await nextTurn();
+    await waitFor(() => registrations === 1 && polls === 1);
     assert.equal(registrations, 1);
     assert.equal(polls, 1);
     assert.equal(outstanding, 1);
     assert.equal(await Promise.race([running.then(() => "settled"), Promise.resolve("pending")]), "pending");
 
     firstPoll.resolve(response(null));
-    await nextTurn();
-    assert.equal(polls, 2);
+    await waitFor(() => polls === 2);
     assert.equal(outstanding, 1);
 
     secondPoll.resolve(response(delivery));

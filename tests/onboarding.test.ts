@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -104,7 +104,7 @@ test("relay init --github creates discovery-ready GitHub configuration", async (
   });
 });
 
-test("the packed package runs the documented init, start, emit, get, and stop flow", { timeout: 20_000 }, async () => {
+test("the packed package runs the documented parked agent delivery lifecycle", { timeout: 20_000 }, async () => {
   await inTemporaryProject(async (directory) => {
     const { stdout: packageName } = await exec("npm", ["pack", "--pack-destination", directory, "--silent"], { cwd: projectRoot });
     const prefix = join(directory, "prefix");
@@ -116,41 +116,152 @@ test("the packed package runs the documented init, start, emit, get, and stop fl
 
     const project = join(directory, "project");
     await mkdir(project);
-    await exec(relay, ["init"], { cwd: project });
+    const { stdout: initialized, stderr: initError } = await exec(relay, ["init"], { cwd: project });
     const server = spawn(relay, ["start", "--port", "0"], { cwd: project, stdio: ["ignore", "pipe", "pipe"] });
-    let serverOutput = "";
     try {
-      await new Promise<void>((resolveStarted, reject) => {
-        server.stdout.setEncoding("utf8");
-        server.stdout.on("data", (chunk: string) => {
-          serverOutput += chunk;
-          if (serverOutput.includes("relay started on")) resolveStarted();
-        });
-        server.once("error", reject);
-        server.once("exit", (code) => reject(new Error(`relay exited before startup with ${code}`)));
-      });
-      const { stdout: emitted } = await exec(relay, [
+      server.stdout.setEncoding("utf8");
+      const [startupChunk] = await once(server.stdout, "data") as [string];
+      assert.match(startupChunk, /relay started on/);
+
+      const poll = spawn(relay, [
+        "agent",
+        "poll",
+        "onboarding-agent",
+        "--definitions",
+        "example.requested@1",
+        "--structured-output",
+        "--context-tokens",
+        "5000",
+        "--timeout",
+        "5000",
+      ], { cwd: project, stdio: ["ignore", "pipe", "pipe"] });
+      let pollOutput = "";
+      let pollError = "";
+      poll.stdout.setEncoding("utf8");
+      poll.stderr.setEncoding("utf8");
+      poll.stdout.on("data", (chunk: string) => { pollOutput += chunk; });
+      poll.stderr.on("data", (chunk: string) => { pollError += chunk; });
+      const pollExit = once(poll, "exit") as Promise<[number | null, NodeJS.Signals | null]>;
+      const { stdout: emitted, stderr: emitError } = await exec(relay, [
         "emit",
         "example.requested",
         "--version",
         "1",
         "--idempotency-key",
-        "onboarding-1",
+        "onboarding-agent-1",
         "--json",
         "{\"message\":\"hello\"}",
       ], { cwd: project });
+      assert.equal(emitError, "");
       const event: unknown = JSON.parse(emitted);
       assert(event !== null && typeof event === "object" && "id" in event && typeof event.id === "string");
       const eventId = event.id;
+
+      const [pollCode, pollSignal] = await pollExit;
+      assert.equal(pollCode, 0);
+      assert.equal(pollSignal, null);
+      assert.equal(pollError, "");
+      const pollLines = pollOutput.trim().split("\n");
+      assert.equal(pollLines.length, 1);
+      const delivery: unknown = JSON.parse(pollLines[0] ?? "");
+      assert(delivery !== null && typeof delivery === "object" && "event" in delivery && "leaseId" in delivery);
+      const deliveryEvent = delivery.event;
+      assert(deliveryEvent !== null && typeof deliveryEvent === "object" && "id" in deliveryEvent && typeof deliveryEvent.id === "string");
+      assert.equal(deliveryEvent.id, eventId);
+      assert(typeof delivery.leaseId === "string");
+      const leaseId = delivery.leaseId;
+
+      const runtime: unknown = JSON.parse(await readFile(join(project, ".relay", "runtime.json"), "utf8"));
+      assert(runtime !== null && typeof runtime === "object" && "token" in runtime && typeof runtime.token === "string");
+      const runtimeToken = runtime.token;
+      const leaseDirectory = join(project, ".relay", "agent-leases");
+      const leaseFiles = await readdir(leaseDirectory);
+      assert.equal(leaseFiles.length, 1);
+      const leasePath = join(leaseDirectory, leaseFiles[0] ?? "");
+      assert.equal((await stat(leasePath)).mode & 0o777, 0o600);
+      const lease: unknown = JSON.parse(await readFile(leasePath, "utf8"));
+      assert(lease !== null && typeof lease === "object" && "token" in lease && typeof lease.token === "string" && "leaseId" in lease && typeof lease.leaseId === "string" && "eventId" in lease && typeof lease.eventId === "string");
+      assert.equal(lease.leaseId, leaseId);
+      assert.equal(lease.eventId, eventId);
+      assert.equal(`${pollOutput}${pollError}`.includes(runtimeToken), false);
+      assert.equal(`${pollOutput}${pollError}`.includes(lease.token), false);
+
+      const startedReply = await exec(relay, ["agent", "reply", leaseId, "start"], { cwd: project });
+      assert.deepEqual(JSON.parse(startedReply.stdout), { ok: true });
+      assert.equal(startedReply.stderr, "");
+      assert.equal(`${startedReply.stdout}${startedReply.stderr}`.includes(lease.token), false);
+      const completed = await exec(relay, [
+        "agent",
+        "reply",
+        leaseId,
+        "complete",
+        "--json",
+        "{\"result\":{\"reply\":\"hello\"},\"effects\":[]}",
+      ], { cwd: project });
+      assert.deepEqual(JSON.parse(completed.stdout), { ok: true });
+      assert.equal(completed.stderr, "");
+      assert.equal(`${completed.stdout}${completed.stderr}`.includes(lease.token), false);
+      await assert.rejects(readFile(leasePath, "utf8"), { code: "ENOENT" });
+
       const { stdout: retrieved } = await exec(relay, ["get", eventId], { cwd: project });
       const retrievedEvent: unknown = JSON.parse(retrieved);
-      assert(retrievedEvent !== null && typeof retrievedEvent === "object" && "id" in retrievedEvent);
-      assert.equal(retrievedEvent.id, eventId);
+      assert(retrievedEvent !== null && typeof retrievedEvent === "object" && "state" in retrievedEvent && "result" in retrievedEvent);
+      assert.equal(retrievedEvent.state, "completed");
+      assert.deepEqual(retrievedEvent.result, { reply: "hello" });
 
+      const timedOut = await exec(relay, [
+        "agent",
+        "poll",
+        "onboarding-agent",
+        "--definitions",
+        "example.requested@1",
+        "--structured-output",
+        "--context-tokens",
+        "5000",
+        "--timeout",
+        "50",
+      ], { cwd: project });
+      assert.equal(timedOut.stdout, "{\"type\":\"timeout\"}\n");
+      assert.equal(timedOut.stderr, "");
+      assert.equal([
+        initialized,
+        initError,
+        help,
+        stderr,
+        emitted,
+        emitError,
+        pollOutput,
+        pollError,
+        startedReply.stdout,
+        startedReply.stderr,
+        completed.stdout,
+        completed.stderr,
+        retrieved,
+        timedOut.stdout,
+        timedOut.stderr,
+      ].join("").includes(runtimeToken), false);
+      assert.equal([
+        initialized,
+        initError,
+        help,
+        stderr,
+        emitted,
+        emitError,
+        pollOutput,
+        pollError,
+        startedReply.stdout,
+        startedReply.stderr,
+        completed.stdout,
+        completed.stderr,
+        retrieved,
+        timedOut.stdout,
+        timedOut.stderr,
+      ].join("").includes(lease.token), false);
       const stopped = once(server, "exit");
-      await exec(relay, ["stop"], { cwd: project });
-      const [exitCode] = await stopped;
-      assert.equal(exitCode, 0);
+      const stopResult = await exec(relay, ["stop"], { cwd: project });
+      assert.equal(stopResult.stderr, "");
+      const [stopCode] = await stopped;
+      assert.equal(stopCode, 0);
     } finally {
       if (server.exitCode === null) server.kill("SIGTERM");
     }

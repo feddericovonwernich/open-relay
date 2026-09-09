@@ -36,6 +36,30 @@ relay stop
 
 Success means `emit` returns an event ID and `get` returns that same event. The starter event may remain queued until a compatible agent worker registers; acceptance and durable retrieval are the onboarding proof.
 
+## One-shot harness agent loop
+
+Run the agent poll as a harness-managed foreground or background process:
+
+```bash
+relay agent poll onboarding-agent --definitions example.requested@1 --structured-output --context-tokens 5000
+```
+
+While parked, the process prints nothing and consumes no model turn. When a compatible event arrives, it prints one raw delivery JSON line and exits `0`. Service that delivery immediately, then use the lease ID to reply before polling again:
+
+```bash
+relay agent reply <lease-id> start
+relay agent reply <lease-id> complete --json '{"result":{"reply":"hello"},"effects":[]}'
+relay agent poll onboarding-agent --definitions example.requested@1 --structured-output --context-tokens 5000
+```
+
+The harness waits on process completion; it never loops `relay get` or runs model/tool execution while no event exists. The exact lifecycle is:
+
+```text
+park -> wake with one delivery -> start -> optional progress/renew/effect/control -> complete/fail/cancelled -> re-poll
+```
+
+After the ten-minute deadline with no delivery, the only output is `{"type":"timeout"}` and the harness must re-poll immediately. An active-delivery error means settle the existing lease before polling again. Credentials stay only in ignored `.relay/agent-leases` files with mode `0600`; they are not in delivery JSON, stdout, or argv. A Relay restart invalidates the authority and existing recovery owns unresolved work.
+
 ## GitHub PR automation
 
 Generate the base project and connector configuration:

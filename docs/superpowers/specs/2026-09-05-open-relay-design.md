@@ -474,6 +474,8 @@ relay recovery list
 relay recovery resolve <event-id> --as completed|failed|cancelled --evidence <json>
 relay workers
 relay reload
+relay agent poll <worker-id> [--definitions <csv>] [--tools <csv>] [--structured-output] [--context-tokens <n>] [--system-reserve <n>] [--timeout <ms>]
+relay agent reply <lease-id> <action> [--json <object>]
 ```
 
 Status output includes active definition digest, state, attempt, worker, lease expiry, available-at time, effect state, recovery reason, and last update sequence. Logs are structured JSON and always include `eventId`, `definitionRevision`, `attempt`, and `workerId` when available.
