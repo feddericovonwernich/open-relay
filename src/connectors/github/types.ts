@@ -38,6 +38,8 @@ export interface GitHubPullRequest {
   baseRef: string;
   state: "open" | "closed";
   updatedAt: string;
+  repositoryId: number;
+  repositoryFullName: string;
 }
 
 export interface GitHubCheckRun {

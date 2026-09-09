@@ -91,8 +91,31 @@ function decodePullRequest(value: unknown): GitHubPullRequest | undefined {
   const item = recordOf(value);
   const head = recordOf(item?.head);
   const base = recordOf(item?.base);
-  if (!item || !integerField(item.number) || !stringField(item.html_url) || !head || !stringField(head.sha) || !base || !stringField(base.ref) || (item.state !== "open" && item.state !== "closed") || !stringField(item.updated_at)) return undefined;
-  return { number: item.number, url: item.html_url, headSha: head.sha, baseRef: base.ref, state: item.state, updatedAt: item.updated_at };
+  const repository = recordOf(base?.repo);
+  if (
+    !item ||
+    !integerField(item.number) ||
+    !stringField(item.html_url) ||
+    !head ||
+    !stringField(head.sha) ||
+    !base ||
+    !stringField(base.ref) ||
+    !repository ||
+    !integerField(repository.id) ||
+    !stringField(repository.full_name) ||
+    (item.state !== "open" && item.state !== "closed") ||
+    !stringField(item.updated_at)
+  ) return undefined;
+  return {
+    number: item.number,
+    url: item.html_url,
+    headSha: head.sha,
+    baseRef: base.ref,
+    state: item.state,
+    updatedAt: item.updated_at,
+    repositoryId: repository.id,
+    repositoryFullName: repository.full_name,
+  };
 }
 
 function decodeCheckRun(value: unknown): GitHubCheckRun | undefined {

@@ -8,7 +8,7 @@ const pr = (number: number, state: "open" | "closed" = "open", updated = "2026-0
   number,
   html_url: `https://github.com/${repo}/pull/${number}`,
   head: { sha: `sha-${number}` },
-  base: { ref: "main" },
+  base: { ref: "main", repo: { id: 42, full_name: repo } },
   state,
   updated_at: updated,
 });
@@ -111,6 +111,15 @@ test("sends exact GitHub headers", async () => {
     assert.equal(headers?.accept, "application/vnd.github+json");
     assert.equal(headers?.["x-github-api-version"], "2026-03-10");
     assert.equal(headers?.["user-agent"], "open-relay-github-connector");
+  } finally { await server.close(); }
+});
+
+test("requires repository identity in pull-request responses", async () => {
+  const malformed = { ...pr(9), base: { ref: "main" } };
+  const server = await fakeGitHubServer({ "/repos/octo/repo/pulls/9": json(malformed) });
+  try {
+    const api = client(server.url);
+    await assert.rejects(api.getPullRequest(repo, 9), (error: unknown) => error instanceof Error && error.message.includes("malformed"));
   } finally { await server.close(); }
 });
 
