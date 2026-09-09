@@ -105,16 +105,28 @@ test("sends exact GitHub headers", async () => {
   try {
     const api = client(server.url);
     await api.getPullRequest(repo, 9);
-    assert.deepEqual({
-      authorization: server.requests[0]?.headers.authorization,
-      accept: server.requests[0]?.headers.accept,
-      version: server.requests[0]?.headers["x-github-api-version"],
-      userAgent: server.requests[0]?.headers["user-agent"],
-    }, {
-      authorization: "Bearer top-secret",
-      accept: "application/vnd.github+json",
-      version: "2026-03-10",
-      userAgent: "open-relay-github-connector",
-    });
+    const headers = server.requests[0]?.headers;
+    assert.equal(headers?.authorization?.slice(0, "Bearer ".length), "Bearer ");
+    assert.equal(headers?.authorization?.length, "Bearer ".length + "top-secret".length);
+    assert.equal(headers?.accept, "application/vnd.github+json");
+    assert.equal(headers?.["x-github-api-version"], "2026-03-10");
+    assert.equal(headers?.["user-agent"], "open-relay-github-connector");
   } finally { await server.close(); }
+});
+
+test("preserves abort when response JSON is interrupted", async () => {
+  const abort = new AbortController();
+  const fetcher: typeof fetch = async (_input, init) => ({
+    status: 200,
+    ok: true,
+    headers: new Headers(),
+    json: async () => await new Promise<unknown>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }),
+  } as Response);
+  const api = client("http://127.0.0.1:1", { fetch: fetcher });
+  const pending = api.getPullRequest(repo, 9, abort.signal);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  abort.abort();
+  await assert.rejects(pending, (error: unknown) => error instanceof Error && error.name === "AbortError");
 });

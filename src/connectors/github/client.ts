@@ -166,12 +166,20 @@ export class GitHubClient {
     this.token = options.token;
     this.apiVersion = options.apiVersion;
     this.requestFetch = options.fetch ?? globalThis.fetch;
-    this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms, signal) => new Promise<void>((resolve, reject) => {
-      if (signal.aborted) { reject(abortError("The operation was aborted")); return; }
-      const timer = setTimeout(resolve, Math.max(0, ms));
-      signal.addEventListener("abort", () => { clearTimeout(timer); reject(abortError("The operation was aborted")); }, { once: true });
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, Math.max(0, ms));
+      const onAbort = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        reject(abortError("The operation was aborted"));
+      };
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
     }));
+    this.now = options.now ?? Date.now;
     this.jitter = options.jitter ?? (() => 0);
   }
 
@@ -253,7 +261,10 @@ export class GitHubClient {
       if (response.status >= 500) throw new GitHubClientError("github_transient_error", `GitHub server error (${response.status})`, response.status);
       if (!response.ok) throw new GitHubClientError("github_protocol_error", `GitHub request failed (${response.status})`, response.status);
       let body: unknown;
-      try { body = await response.json(); } catch { throw protocol(`GitHub response at ${url} is not valid JSON`); }
+      try { body = await response.json(); } catch (error) {
+        if (isAbort(error) || signal?.aborted) throw abortError("The operation was aborted");
+        throw protocol(`GitHub response at ${url} is not valid JSON`);
+      }
       const nextUrl = parseLinkNext(response.headers.get("link"), url, this.apiBaseUrl);
       this.cache.set(url, { etag: response.headers.get("etag") ?? undefined, body, nextUrl });
       return body;
