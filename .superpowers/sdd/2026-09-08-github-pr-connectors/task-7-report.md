@@ -11,4 +11,4 @@ Verification:
 - `node --test tests/github-emitter.test.ts` — 3 passed.
 - `npm run typecheck` — passed.
 
-Commit: pending
+Commit: `6500c95 feat: emit normalized GitHub completions`
