@@ -18,6 +18,7 @@ export type FakeGitHubScript = FakeGitHubResponse | ((request: FakeGitHubRequest
 export interface FakeGitHubServer {
   url: string;
   requests: FakeGitHubRequest[];
+  count(path: string): number;
   close(): Promise<void>;
 }
 
@@ -55,6 +56,7 @@ export async function fakeGitHubServer(scripts: Record<string, FakeGitHubScript 
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
+    count: (path) => requests.filter((request) => request.url === path).length,
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
 }
