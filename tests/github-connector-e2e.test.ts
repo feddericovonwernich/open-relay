@@ -220,3 +220,65 @@ test("CLI discovery and once output are redacted", async () => {
     await fixture.github.close(); await relay.close();
   }
 });
+test("CLI validates Relay admin access before polling zero candidates", async () => {
+  const relay = await relayHarness();
+  const github = await fakeGitHubServer({
+    [`/repos/${repo}/pulls?state=open&per_page=100`]: json([]),
+    [`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`]: json([]),
+  });
+  const configPath = join(relay.root, "github-empty.json");
+  const oldToken = process.env.GITHUB_TOKEN;
+  const oldNodeEnv = process.env.NODE_ENV;
+  try {
+    await writeFile(configPath, JSON.stringify(config(github.url)));
+    await writeFile(join(relay.root, ".relay", "runtime.json"), JSON.stringify({ port: (relay.server.address() as { port: number }).port, token: "stale-admin-token" }));
+    process.env.GITHUB_TOKEN = secret;
+    process.env.NODE_ENV = "test";
+    const output: string[] = [];
+    const errors: string[] = [];
+    const code = await runCli(["connect", "github", "--config", configPath, "--once"], {
+      cwd: relay.root,
+      stdout: { write: (value) => output.push(value) },
+      stderr: { write: (value) => errors.push(value) },
+    });
+    assert.equal(code, 1);
+    assert.equal(github.requests.length, 0);
+    assert.equal(output.length, 0);
+    assert.equal(errors.join("").includes("stale-admin-token"), false);
+  } finally {
+    if (oldToken === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = oldToken;
+    if (oldNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = oldNodeEnv;
+    await github.close();
+    await relay.close();
+  }
+});
+
+test("CLI fails quickly when Relay is unavailable", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-github-unavailable-"));
+  await mkdir(join(root, ".relay"), { recursive: true });
+  const configPath = join(root, "github.json");
+  const oldToken = process.env.GITHUB_TOKEN;
+  const oldNodeEnv = process.env.NODE_ENV;
+  try {
+    await writeFile(configPath, JSON.stringify(config("http://127.0.0.1:1")));
+    await writeFile(join(root, ".relay", "runtime.json"), JSON.stringify({ port: 1, token: "admin-token" }));
+    process.env.GITHUB_TOKEN = secret;
+    process.env.NODE_ENV = "test";
+    const output: string[] = [];
+    const errors: string[] = [];
+    const started = Date.now();
+    const code = await runCli(["connect", "github", "--config", configPath, "--once"], {
+      cwd: root,
+      stdout: { write: (value) => output.push(value) },
+      stderr: { write: (value) => errors.push(value) },
+    });
+    assert.equal(code, 1);
+    assert.ok(Date.now() - started < 1_000);
+    assert.equal(output.length, 0);
+    assert.equal(errors.join("").includes("admin-token"), false);
+  } finally {
+    if (oldToken === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = oldToken;
+    if (oldNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = oldNodeEnv;
+    await rm(root, { recursive: true, force: true });
+  }
+});

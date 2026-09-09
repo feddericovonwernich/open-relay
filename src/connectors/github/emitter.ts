@@ -5,6 +5,7 @@ export interface GitHubRelayEmitterOptions {
   baseUrl: string;
   adminToken: string;
   fetch?: typeof globalThis.fetch;
+  lifetimeSignal?: AbortSignal;
 }
 
 export class GitHubRelayEmitterError extends Error {
@@ -100,12 +101,14 @@ export class GitHubRelayEmitter {
   private readonly baseUrl: string;
   private readonly adminToken: string;
   private readonly fetcher: typeof globalThis.fetch;
+  private readonly lifetimeSignal?: AbortSignal;
   private readonly producerTokens = new Map<number, Promise<string>>();
 
   constructor(options: GitHubRelayEmitterOptions) {
     this.baseUrl = options.baseUrl;
     this.adminToken = options.adminToken;
     this.fetcher = options.fetch ?? globalThis.fetch;
+    this.lifetimeSignal = options.lifetimeSignal;
   }
 
   private async request(path: string, token: string, init: RequestInit): Promise<Response> {
@@ -127,7 +130,7 @@ export class GitHubRelayEmitter {
   private producerToken(repositoryId: number, signal?: AbortSignal): Promise<string> {
     const existing = this.producerTokens.get(repositoryId);
     if (existing) return abortable(existing, signal);
-    const pending = this.issueProducerToken(repositoryId);
+    const pending = this.issueProducerToken(repositoryId, this.lifetimeSignal);
     this.producerTokens.set(repositoryId, pending);
     void pending.catch(() => {
       if (this.producerTokens.get(repositoryId) === pending) this.producerTokens.delete(repositoryId);
@@ -135,9 +138,24 @@ export class GitHubRelayEmitter {
     return abortable(pending, signal);
   }
 
-  private async issueProducerToken(repositoryId: number): Promise<string> {
+  async preflight(signal?: AbortSignal): Promise<void> {
     const response = await this.request("/v1/credentials", this.adminToken, {
       method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "observer", subjectId: "connector:github:preflight" }),
+    });
+    if (response.ok) return;
+    const body = await responseBody(response);
+    const error = relayError(body);
+    const message = safeText(error.message ?? body ?? `relay request failed (${response.status})`, [this.adminToken]);
+    throw new GitHubRelayEmitterError(error.code ?? "relay_auth_failed", message, response.status);
+  }
+
+  private async issueProducerToken(repositoryId: number, signal?: AbortSignal): Promise<string> {
+    const response = await this.request("/v1/credentials", this.adminToken, {
+      method: "POST",
+      signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scope: "producer", subjectId: `connector:github:${repositoryId}` }),
     });

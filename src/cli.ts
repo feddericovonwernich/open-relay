@@ -197,13 +197,18 @@ async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "std
     const githubToken = process.env[config.tokenEnv];
     if (!githubToken) throw new Error(`GitHub token environment variable is missing: ${config.tokenEnv}`);
     const runtime = await readRuntime(root, parsed.options);
-    const client = new GitHubClient({ baseUrl: config.apiBaseUrl, apiVersion: config.apiVersion, token: githubToken });
-    const emitter = new GitHubRelayEmitter({ baseUrl: `http://127.0.0.1:${runtime.port}`, adminToken: runtime.token });
     const controller = new AbortController();
     const abort = (): void => controller.abort();
     process.once("SIGINT", abort);
     process.once("SIGTERM", abort);
+    const client = new GitHubClient({ baseUrl: config.apiBaseUrl, apiVersion: config.apiVersion, token: githubToken });
+    const emitter = new GitHubRelayEmitter({
+      baseUrl: `http://127.0.0.1:${runtime.port}`,
+      adminToken: runtime.token,
+      lifetimeSignal: controller.signal,
+    });
     try {
+      await emitter.preflight(AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]));
       const summary = await runGitHubConnector({
         config,
         client,

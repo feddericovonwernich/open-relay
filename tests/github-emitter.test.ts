@@ -141,3 +141,23 @@ test("an aborted emission does not cancel shared credential issuance", async () 
   assert.equal(await healthy, "emitted");
   assert.equal(credentials, 1);
 });
+test("connector lifetime abort cancels shared credential issuance", async () => {
+  let credentials = 0;
+  const lifetime = new AbortController();
+  const fetcher = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+    if (requestUrl(input).pathname !== "/v1/credentials") return response(201, { event: { id: "event-1" } });
+    credentials += 1;
+    return new Promise<Response>((_resolve, reject) => {
+      const abort = (): void => reject(init?.signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+      if (init?.signal?.aborted) abort();
+      else init?.signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher, lifetimeSignal: lifetime.signal });
+  const first = emitter.emit(trigger, snapshot, candidate);
+  const second = emitter.emit(trigger, snapshot, candidate);
+  lifetime.abort("connector stopped");
+  await assert.rejects(first, (error: unknown) => error === "connector stopped");
+  await assert.rejects(second, (error: unknown) => error === "connector stopped");
+  assert.equal(credentials, 1);
+});

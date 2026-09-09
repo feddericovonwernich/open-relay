@@ -150,7 +150,7 @@ function apiUrl(value: unknown, options: GitHubConfigValidationOptions): string 
   } catch {
     invalid("api_url");
   }
-  if (parsed.username || parsed.password) invalid("api_url");
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) invalid("api_url");
   if (parsed.protocol === "https:") return parsed.toString().replace(/\/$/, "");
   if (parsed.protocol === "http:" && (options.allowLoopbackHttp || process.env.NODE_ENV === "test") && isLoopback(parsed.hostname)) {
     return parsed.toString().replace(/\/$/, "");

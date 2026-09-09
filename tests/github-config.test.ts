@@ -115,6 +115,19 @@ test("rejects non-loopback HTTP API URLs", () => {
     errorWithCode("api_url"),
   );
 });
+test("rejects API URLs with credentials or URL components", () => {
+  for (const apiBaseUrl of [
+    "https://user:password@api.github.com",
+    "https://api.github.com?token=secret",
+    "https://api.github.com#secret",
+  ]) {
+    assert.throws(
+      () => validateGitHubConnectorConfig({ ...validConfig(), apiBaseUrl }),
+      errorWithCode("api_url"),
+    );
+  }
+});
+
 
 test("allows loopback HTTP only in test mode or explicit validation option", () => {
   const value = { ...validConfig(), apiBaseUrl: "http://127.0.0.1:8787" };
