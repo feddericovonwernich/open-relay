@@ -4,11 +4,11 @@ Implemented immutable normalized GitHub completion payloads and repository-scope
 
 - Added `normalizeCompletion` with an explicit whitelist and deep freezing; mutable/private GitHub fields are excluded.
 - Added `GitHubRelayEmitter` with per-repository producer credential caching, deterministic completion keys, direct Relay acceptance status handling (`201` emitted / `200` replayed), and trigger drift/unknown-definition classification.
-- Added recursive token/error redaction and focused normalization/emitter tests.
+- Preserved abort identity and decoupled shared credential issuance from individual caller signals; cancellation has focused concurrent coverage.
 
 Verification:
 
-- `node --test tests/github-emitter.test.ts` — 3 passed.
+- `node --test tests/github-emitter.test.ts` — 4 passed.
 - `npm run typecheck` — passed.
 
-Commit: `6500c95 feat: emit normalized GitHub completions`
+Commits: `6500c95 feat: emit normalized GitHub completions`; `c2fb3fd fix: isolate Relay credential cancellation`
