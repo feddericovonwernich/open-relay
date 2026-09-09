@@ -193,11 +193,21 @@ function parseReplyBody(parsed: ParsedArgs): JsonObject {
   }
   return body as JsonObject;
 }
+function requireAgentCapabilityValues(parsed: ParsedArgs): void {
+  for (const name of ["definitions", "tools", "context-tokens", "system-reserve"]) {
+    if (parsed.options[name] !== undefined && typeof parsed.options[name] !== "string") {
+      throw new Error(`--${name} requires a value`);
+    }
+  }
+}
+
 
 async function agentCommand(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "stdout">>): Promise<number> {
   const root = resolve(io.cwd, option(parsed.options, "project-root", "project") ?? ".");
   const action = requiredArg(parsed.args, 0, "agent action");
   if (action === "poll") {
+    if (parsed.args.length !== 2) throw new Error("agent poll accepts exactly one worker id");
+    requireAgentCapabilityValues(parsed);
     const workerId = requiredArg(parsed.args, 1, "worker id");
     const timeout = parsed.options.timeout === undefined ? 600_000 : parseAgentTimeout(parsed);
     const runtime = await readRuntime(root, parsed.options);
@@ -216,6 +226,7 @@ async function agentCommand(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" |
     }
   }
   if (action === "reply") {
+    if (parsed.args.length !== 3) throw new Error("agent reply accepts exactly a lease id and action");
     const leaseId = requiredArg(parsed.args, 1, "lease id");
     const replyAction = requiredArg(parsed.args, 2, "agent action");
     if (!isAgentReplyAction(replyAction)) throw new Error(`unknown agent action: ${replyAction}`);

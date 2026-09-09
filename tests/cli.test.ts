@@ -85,6 +85,37 @@ test("CLI argument parser supports nested agent poll and reply commands", () => 
   });
 });
 
+test("agent poll rejects valueless capability options and surplus positionals", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-agent-"));
+  try {
+    for (const optionName of ["definitions", "tools", "context-tokens", "system-reserve"]) {
+      let stderr = "";
+      const code = await runCli(["agent", "poll", "worker-1", `--${optionName}`], {
+        cwd: root,
+        stdout: { write: () => undefined },
+        stderr: { write: (value) => { stderr += value; } },
+      });
+      assert.equal(code, 1);
+      assert.equal(stderr, `relay: --${optionName} requires a value\n`);
+    }
+    for (const [argv, message] of [
+      [["agent", "poll", "worker-1", "extra"], "agent poll accepts exactly one worker id"],
+      [["agent", "reply", "lease-1", "control", "extra"], "agent reply accepts exactly a lease id and action"],
+    ] as const) {
+      let stderr = "";
+      const code = await runCli(argv, {
+        cwd: root,
+        stdout: { write: () => undefined },
+        stderr: { write: (value) => { stderr += value; } },
+      });
+      assert.equal(code, 1);
+      assert.equal(stderr, `relay: ${message}\n`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("agent poll validates timeout bounds and preserves relay error output", async () => {
   for (const timeout of ["0", "600001", "1.5"]) {
     let stderr = "";

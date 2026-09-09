@@ -21,3 +21,19 @@ npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext \
 ```
 
 Formatter, lint, build, onboarding, and project-wide suites were intentionally not run per assignment.
+
+## Round-one review fixes
+
+- Agent polling now rejects valueless `--definitions`, `--tools`, `--context-tokens`, and `--system-reserve` options instead of silently applying defaults.
+- Agent poll/reply now reject surplus positional arguments before reading runtime state or invoking the session adapter.
+- Added focused regression coverage for both validation boundaries.
+
+```text
+node --test tests/cli.test.ts
+# 16 tests, 16 passed, 0 failed
+
+npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext \
+  --allowImportingTsExtensions --rewriteRelativeImportExtensions \
+  --erasableSyntaxOnly --verbatimModuleSyntax --skipLibCheck src/cli.ts
+# passed with no diagnostics
+```
