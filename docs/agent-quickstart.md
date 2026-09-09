@@ -8,7 +8,7 @@ Requirements: Node.js 22.19 or newer and npm.
 
 ```bash
 node --version
-npm install --global github:feddericovonwernich/open-relay
+npm install --global https://github.com/feddericovonwernich/open-relay/archive/refs/heads/main.tar.gz
 cd /path/to/target-repository
 relay init
 ```

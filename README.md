@@ -47,7 +47,7 @@ Event definitions decide **what** work means and which handler receives it. Open
 ## Install
 
 ```bash
-npm install --global github:feddericovonwernich/open-relay
+npm install --global https://github.com/feddericovonwernich/open-relay/archive/refs/heads/main.tar.gz
 relay --help
 ```
 

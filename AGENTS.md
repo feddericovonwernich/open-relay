@@ -5,7 +5,7 @@
 1. Verify `node --version` is 22.19 or newer.
 2. Install the CLI:
    ```bash
-   npm install --global github:feddericovonwernich/open-relay
+   npm install --global https://github.com/feddericovonwernich/open-relay/archive/refs/heads/main.tar.gz
    ```
 3. Change to the target repository.
 4. Run `relay init`, or `relay init --github owner/repository` when GitHub PR automation is required.
