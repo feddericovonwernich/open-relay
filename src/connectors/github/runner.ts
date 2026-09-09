@@ -282,6 +282,7 @@ export async function runGitHubCycle(options: GitHubCycleOptions): Promise<Conne
   const states = options.state ?? new Map<string, RepositoryState>();
   const summary = emptySummary(options.config.repositories.length);
   const client = limitedClient(options.client, new RequestLimiter());
+  const cycleOptions = { ...options, disabledTriggers: options.disabledTriggers ?? new Set<string>() };
   let fatal: unknown;
   const onFatal = (error: unknown): void => {
     if (fatal === undefined) fatal = error;
@@ -290,7 +291,7 @@ export async function runGitHubCycle(options: GitHubCycleOptions): Promise<Conne
   try {
     await mapConcurrent(options.config.repositories, 4, async (repository) => {
       try {
-        await runRepository(options, client, repository, summary, states, signal, now, onFatal);
+        await runRepository(cycleOptions, client, repository, summary, states, signal, now, onFatal);
       } catch (error) {
         onFatal(error);
       }
