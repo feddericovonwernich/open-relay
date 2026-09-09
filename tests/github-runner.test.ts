@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runGitHubConnector, runGitHubCycle, type ConnectorSummary } from "../src/connectors/github/runner.ts";
 import { GitHubRelayEmitterError } from "../src/connectors/github/emitter.ts";
-import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot } from "../src/connectors/github/types.ts";
+import { GitHubClientError } from "../src/connectors/github/client.ts";
+import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot, CompletionCandidate } from "../src/connectors/github/types.ts";
 
 const trigger = {
   id: "sonar-v1",
@@ -114,4 +115,125 @@ test("trigger drift disables only that trigger for later cycles", async () => {
   assert.equal(emissions, 1);
   assert.equal(result.candidates, 1);
   assert.equal(result.errors.length, 1);
+});
+
+function candidate(id: string): CompletionCandidate {
+  return {
+    provider: "sonarqube",
+    triggerId: trigger.id,
+    repositoryId: 99,
+    pullRequestNumber: 7,
+    artifactKind: "check_run",
+    artifactId: id,
+    artifactHeadSha: "abc",
+    artifact: { name: "Sonar", completion: "completed", conclusion: "success", completedAt: new Date().toISOString(), detailsUrl: null },
+  };
+}
+
+test("all GitHub requests share a global concurrency ceiling of four", async () => {
+  const repositories = Array.from({ length: 6 }, (_, index) => `octo/repo-${index}`);
+  const activeByRequest = { active: 0, maximum: 0 };
+  const request = async (): Promise<void> => {
+    activeByRequest.active += 1;
+    activeByRequest.maximum = Math.max(activeByRequest.maximum, activeByRequest.active);
+    await Promise.resolve();
+    activeByRequest.active -= 1;
+  };
+  const client = {
+    listOpenPullRequests: async (repository: string) => { await request(); return [{ ...pullRequest, repositoryFullName: repository }]; },
+    listRecentClosedPullRequests: async () => { await request(); return []; },
+    listCompletedCheckRuns: async () => { await request(); return []; },
+    listReviews: async () => { await request(); return []; },
+    getPullRequest: async () => { await request(); return pullRequest; },
+  };
+  const result = await runGitHubCycle({ config: { ...config, repositories }, client, discover: true });
+  assert.equal(result.pullRequests, repositories.length);
+  assert.equal(activeByRequest.maximum, 4);
+});
+
+test("fatal GitHub auth aborts sibling repository requests", async () => {
+  let siblingAborted = false;
+  const waitForAbort = async (signal?: AbortSignal): Promise<never> => {
+    await new Promise<void>((resolve) => signal?.addEventListener("abort", () => { siblingAborted = true; resolve(); }, { once: true }));
+    throw new DOMException("aborted", "AbortError");
+  };
+  const client = {
+    listOpenPullRequests: async (repository: string, signal?: AbortSignal) => repository === "octo/repo" ? (() => { throw new GitHubClientError("github_auth_failed", "bad token", 401); })() : waitForAbort(signal),
+    listRecentClosedPullRequests: async (_repository: string, _cutoff: number, signal?: AbortSignal) => waitForAbort(signal),
+    listCompletedCheckRuns: async () => [],
+    listReviews: async () => [],
+    getPullRequest: async () => pullRequest,
+  };
+  await assert.rejects(runGitHubCycle({ config: { ...config, repositories: ["octo/repo", "octo/other"] }, client }), /bad token/);
+  assert.equal(siblingAborted, true);
+});
+
+test("Relay credential rejection is fatal", async () => {
+  await assert.rejects(runGitHubCycle({
+    config,
+    client: clientFor(),
+    emitter: { emit: async () => { throw new GitHubRelayEmitterError("credential_failed", "runtime rejected", 401); } },
+  }), /runtime rejected/);
+});
+
+test("transient backoff skips only an ineligible repository on the next cycle", async () => {
+  const state = new Map();
+  let now = 0;
+  let badCalls = 0;
+  let healthyCalls = 0;
+  const client = {
+    listOpenPullRequests: async (repository: string) => {
+      if (repository === "octo/bad") { badCalls += 1; throw new GitHubClientError("github_transient_error", "temporary"); }
+      healthyCalls += 1;
+      return [{ ...pullRequest, repositoryFullName: repository }];
+    },
+    listRecentClosedPullRequests: async () => [],
+    listCompletedCheckRuns: async () => [],
+    listReviews: async () => [],
+    getPullRequest: async () => pullRequest,
+  };
+  const cycleOptions = { config: { ...config, repositories: ["octo/bad", "octo/good"] }, client, state, now: () => now, discover: true };
+  await runGitHubCycle(cycleOptions);
+  now = 1000;
+  const second = await runGitHubCycle(cycleOptions);
+  assert.equal(badCalls, 1);
+  assert.equal(healthyCalls, 2);
+  assert.equal(second.pullRequests, 1);
+});
+
+test("head verification transient failure enters repository backoff", async () => {
+  const state = new Map();
+  const result = await runGitHubCycle({
+    config,
+    client: clientFor(),
+    state,
+    now: () => 0,
+    emitter: { emit: async () => "emitted" },
+    verifyCurrentHead: async () => { throw new GitHubClientError("github_transient_error", "head unavailable"); },
+  });
+  assert.equal(result.emitted, 0);
+  assert.equal(state.get("octo/repo")?.nextEligibleAt, 5_000);
+});
+
+test("trigger drift stops remaining candidates for that trigger", async () => {
+  let emissions = 0;
+  const result = await runGitHubCycle({
+    config,
+    client: clientFor(),
+    recognizers: { sonarqube: () => [candidate("one"), candidate("two")] },
+    emitter: { emit: async () => { emissions += 1; throw new GitHubRelayEmitterError("trigger_drift", "drift"); } },
+  });
+  assert.equal(emissions, 1);
+  assert.equal(result.candidates, 1);
+});
+
+test("structured candidate logs include artifact kind", async () => {
+  const logs: Record<string, unknown>[] = [];
+  await runGitHubCycle({
+    config,
+    client: clientFor(),
+    log: (line) => logs.push(JSON.parse(line) as Record<string, unknown>),
+    discover: true,
+  });
+  assert.equal(logs[0]?.["artifact.kind"], "check_run");
 });

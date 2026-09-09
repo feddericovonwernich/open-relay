@@ -25,10 +25,39 @@ type Recognizer = (snapshot: PrSnapshot, trigger: TriggerConfig) => readonly Com
 
 export interface GitHubRunnerState {
   transientDelay: number;
+  nextEligibleAt: number;
   disabled: boolean;
 }
 
 type RepositoryState = GitHubRunnerState;
+
+class RequestLimiter {
+  private active = 0;
+  private readonly queue: Array<() => void> = [];
+
+  async run<T>(task: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
+    if (this.active >= 4) await new Promise<void>((resolve) => this.queue.push(resolve));
+    if (signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
+    this.active += 1;
+    try {
+      return await task();
+    } finally {
+      this.active -= 1;
+      this.queue.shift()?.();
+    }
+  }
+}
+
+function limitedClient(client: Client, limiter: RequestLimiter): Client {
+  return {
+    listOpenPullRequests: (repository, signal) => limiter.run(() => client.listOpenPullRequests(repository, signal), signal ?? new AbortController().signal),
+    listRecentClosedPullRequests: (repository, cutoff, signal) => limiter.run(() => client.listRecentClosedPullRequests(repository, cutoff, signal), signal ?? new AbortController().signal),
+    listCompletedCheckRuns: (repository, sha, signal) => limiter.run(() => client.listCompletedCheckRuns(repository, sha, signal), signal ?? new AbortController().signal),
+    listReviews: (repository, number, signal) => limiter.run(() => client.listReviews(repository, number, signal), signal ?? new AbortController().signal),
+    getPullRequest: (repository, number, signal) => limiter.run(() => client.getPullRequest(repository, number, signal), signal ?? new AbortController().signal),
+  };
+}
 
 export interface GitHubCycleOptions {
   config: GitHubConnectorConfig;
@@ -103,6 +132,10 @@ function isNotFound(error: unknown): boolean {
 function isAuthFailure(error: unknown): boolean {
   return error instanceof GitHubClientError && error.code === "github_auth_failed";
 }
+function isFatalRelayFailure(error: unknown): boolean {
+  if (!(error instanceof GitHubRelayEmitterError)) return false;
+  return error.status === 401 || error.status === 403 || ["credential_failed", "unauthorized", "invalid_runtime"].includes(error.code);
+}
 
 function discoveryIdentities(snapshot: PrSnapshot): Record<string, unknown>[] {
   const identities: Record<string, unknown>[] = [];
@@ -135,6 +168,7 @@ function logCandidate(log: Log | undefined, snapshot: PrSnapshot, candidate: Com
     "pullRequest.headSha": snapshot.pullRequest.headSha,
     recognizer: candidate.provider,
     triggerId: candidate.triggerId,
+    "artifact.kind": candidate.artifactKind,
     "artifact.id": candidate.artifactId,
     result,
   }));
@@ -143,28 +177,30 @@ function logCandidate(log: Log | undefined, snapshot: PrSnapshot, candidate: Com
 function stateFor(states: Map<string, RepositoryState>, repository: string): RepositoryState {
   const existing = states.get(repository);
   if (existing !== undefined) return existing;
-  const state = { transientDelay: 0, disabled: false };
+  const state = { transientDelay: 0, nextEligibleAt: 0, disabled: false };
   states.set(repository, state);
   return state;
 }
 
 async function runRepository(
   options: GitHubCycleOptions,
+  client: Client,
   repository: string,
   summary: ConnectorSummary,
   states: Map<string, RepositoryState>,
   signal: AbortSignal,
   now: () => number,
-  sleep: Sleep,
+  onFatal: (error: unknown) => void,
 ): Promise<void> {
   const state = stateFor(states, repository);
-  if (state.disabled || signal.aborted) return;
+  if (state.disabled || signal.aborted || now() < state.nextEligibleAt) return;
   try {
-    const pullRequests = await discoverPullRequests(options.client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal);
+    const pullRequests = await discoverPullRequests(client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal);
     summary.pullRequests += pullRequests.length;
     state.transientDelay = 0;
+    state.nextEligibleAt = 0;
     const requirements = deriveSnapshotRequirements(options.config.triggers);
-    const snapshots = await mapConcurrent(pullRequests, 4, (pullRequest) => loadPrSnapshot(options.client, repository, pullRequest, requirements, signal));
+    const snapshots = await mapConcurrent(pullRequests, 4, (pullRequest) => loadPrSnapshot(client, repository, pullRequest, requirements, signal));
     for (const snapshot of snapshots) {
       if (options.discover) {
         for (const identity of discoveryIdentities(snapshot)) options.onDiscovery?.({ repository: snapshot.repository.fullName, pullRequest: snapshot.pullRequest.number, ...identity });
@@ -185,7 +221,7 @@ async function runRepository(
           logCandidate(options.log, snapshot, candidate, "recognized");
           if (options.discover || options.emitter === undefined) continue;
           try {
-            const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(options.client, candidateToVerify, verifySignal));
+            const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
             const current = await verifyHead({ repository, pullRequestNumber: candidate.pullRequestNumber, artifactHeadSha: candidate.artifactHeadSha }, signal);
             if (!current) {
               summary.stale += 1;
@@ -197,21 +233,30 @@ async function runRepository(
             else summary.replayed += 1;
             logCandidate(options.log, snapshot, candidate, result);
           } catch (error) {
+            if (isAuthFailure(error) || isTransient(error)) throw error;
+            if (isFatalRelayFailure(error)) {
+              onFatal(error);
+              throw error;
+            }
             if (isAbort(error, signal)) throw error;
             if (error instanceof GitHubRelayEmitterError && (error.code === "trigger_drift" || error.code === "trigger_invalid")) {
               options.disabledTriggers?.add(trigger.id);
               summary.errors.push(`${error.code}: ${errorText(error)}`);
-            } else {
-              summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
+              logCandidate(options.log, snapshot, candidate, "error");
+              break;
             }
+            summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
             logCandidate(options.log, snapshot, candidate, "error");
           }
         }
       }
     }
   } catch (error) {
+    if (isAuthFailure(error)) {
+      onFatal(error);
+      throw error;
+    }
     if (isAbort(error, signal)) return;
-    if (isAuthFailure(error)) throw error;
     if (isNotFound(error)) {
       state.disabled = true;
       summary.errors.push(`repository ${repository}: not found`);
@@ -219,23 +264,42 @@ async function runRepository(
     }
     if (isTransient(error)) {
       state.transientDelay = state.transientDelay === 0 ? options.config.pollIntervalMs : Math.min(options.config.pollIntervalMs * 8, state.transientDelay * 2);
+      state.nextEligibleAt = now() + state.transientDelay;
       summary.errors.push(`repository ${repository}: ${errorText(error)}`);
-      await sleep(state.transientDelay, signal);
       return;
     }
     summary.errors.push(`repository ${repository}: ${errorText(error)}`);
   }
 }
-
 export async function runGitHubCycle(options: GitHubCycleOptions): Promise<ConnectorSummary> {
-  const signal = options.signal ?? new AbortController().signal;
+  const parentSignal = options.signal ?? new AbortController().signal;
+  const cycleController = new AbortController();
+  const abortCycle = (): void => cycleController.abort();
+  if (parentSignal.aborted) cycleController.abort();
+  else parentSignal.addEventListener("abort", abortCycle, { once: true });
+  const signal = cycleController.signal;
   const now = options.now ?? options.clock ?? Date.now;
-  const sleep = options.sleep ?? DEFAULT_SLEEP;
   const states = options.state ?? new Map<string, RepositoryState>();
   const summary = emptySummary(options.config.repositories.length);
-  await mapConcurrent(options.config.repositories, 4, (repository) => runRepository(options, repository, summary, states, signal, now, sleep));
+  const client = limitedClient(options.client, new RequestLimiter());
+  let fatal: unknown;
+  const onFatal = (error: unknown): void => {
+    if (fatal === undefined) fatal = error;
+    cycleController.abort();
+  };
+  try {
+    await mapConcurrent(options.config.repositories, 4, async (repository) => {
+      try {
+        await runRepository(options, client, repository, summary, states, signal, now, onFatal);
+      } catch (error) {
+        onFatal(error);
+      }
+    });
+  } finally {
+    parentSignal.removeEventListener("abort", abortCycle);
+  }
+  if (fatal !== undefined) throw fatal;
   return summary;
-
 }
 
 export async function runGitHubConnector(options: GitHubConnectorRunOptions): Promise<ConnectorSummary> {
