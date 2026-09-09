@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RelayBrowserClient } from "../src/browser.ts";
-import { isCliEntrypoint, parseArgs } from "../src/cli.ts";
+import { isCliEntrypoint, parseArgs, withoutSecrets } from "../src/cli.ts";
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
@@ -127,4 +127,20 @@ test("stream removes reconnect abort listeners after cancellation", async () => 
   for (const listener of listeners) listener();
   await next;
   assert.equal(adds, removes);
+});
+
+test("parses positional GitHub connector flags", () => {
+  assert.deepEqual(parseArgs(["connect", "github", "--config", "config.json", "--once", "--discover", "--project-root", "/tmp/project"]), {
+    command: "connect",
+    args: ["github"],
+    options: { config: "config.json", once: true, discover: true, "project-root": "/tmp/project" },
+  });
+});
+
+test("safe CLI output keeps app identities while removing secrets", () => {
+  assert.deepEqual(withoutSecrets({ appId: 123, appSlug: "cursor", token: "secret", nested: { credential: "hidden", value: "ok" } }), {
+    appId: 123,
+    appSlug: "cursor",
+    nested: { value: "ok" },
+  });
 });

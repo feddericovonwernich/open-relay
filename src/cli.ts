@@ -10,6 +10,11 @@ import { loadRegistry } from "./registry.ts";
 import { createRelayServer, type RelayServer } from "./server.ts";
 import { openStore } from "./store.ts";
 import { RelayBrowserClient } from "./browser.ts";
+import { GitHubClient } from "./connectors/github/client.ts";
+import { loadGitHubConnectorConfig } from "./connectors/github/config.ts";
+import { GitHubRelayEmitter } from "./connectors/github/emitter.ts";
+import { runGitHubConnector } from "./connectors/github/runner.ts";
+
 
 export type CliOptionValue = string | boolean;
 export interface ParsedArgs {
@@ -80,13 +85,14 @@ function printJson(io: Required<Pick<CliIo, "stdout">>, value: unknown): void {
   io.stdout.write(`${json(value)}\n`);
 }
 
-function withoutSecrets(value: unknown): unknown {
+export function withoutSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutSecrets);
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).filter(([key]) => !/token|credential|secret/i.test(key)).map(([key, child]) => [key, withoutSecrets(child)]));
   }
   return value;
 }
+
 
 async function runtimeFile(cwd: string, options: Record<string, CliOptionValue>): Promise<string> {
   return resolve(cwd, option(options, "runtime") ?? ".relay/runtime.json");
@@ -180,8 +186,42 @@ async function recoveryList(runtime: Runtime, io: Required<Pick<CliIo, "stdout">
 }
 
 async function execute(parsed: ParsedArgs, io: Required<Pick<CliIo, "cwd" | "stdout">>): Promise<number> {
-  if (parsed.command === "start") return startRelay(parsed, io);
   const root = resolve(io.cwd, option(parsed.options, "project-root", "project") ?? ".");
+  if (parsed.command === "connect") {
+    const connector = requiredArg(parsed.args, 0, "connector");
+    if (connector !== "github") throw new Error(`unknown connector: ${connector}`);
+    const discover = parsed.options.discover === true;
+    const once = parsed.options.once === true || discover;
+    const configPath = resolve(root, option(parsed.options, "config") ?? ".relay/connectors/github.json");
+    const config = await loadGitHubConnectorConfig(configPath, { discover, allowLoopbackHttp: process.env.NODE_ENV === "test" });
+    const githubToken = process.env[config.tokenEnv];
+    if (!githubToken) throw new Error(`GitHub token environment variable is missing: ${config.tokenEnv}`);
+    const runtime = await readRuntime(root, parsed.options);
+    const client = new GitHubClient({ baseUrl: config.apiBaseUrl, apiVersion: config.apiVersion, token: githubToken });
+    const emitter = new GitHubRelayEmitter({ baseUrl: `http://127.0.0.1:${runtime.port}`, adminToken: runtime.token });
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    process.once("SIGINT", abort);
+    process.once("SIGTERM", abort);
+    try {
+      const summary = await runGitHubConnector({
+        config,
+        client,
+        emitter,
+        signal: controller.signal,
+        once,
+        discover,
+        onDiscovery: discover ? (identity) => printJson(io, withoutSecrets(identity)) : undefined,
+      });
+      printJson(io, withoutSecrets(summary));
+      return 0;
+    } finally {
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
+    }
+  }
+
+  if (parsed.command === "start") return startRelay(parsed, io);
   if (parsed.command === "stop") {
     const path = await runtimeFile(root, parsed.options);
     const runtime = await readRuntime(root, parsed.options);
