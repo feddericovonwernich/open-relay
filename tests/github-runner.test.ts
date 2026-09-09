@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runGitHubConnector, runGitHubCycle, type ConnectorSummary } from "../src/connectors/github/runner.ts";
+import { GitHubRelayEmitterError } from "../src/connectors/github/emitter.ts";
 import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot } from "../src/connectors/github/types.ts";
 
 const trigger = {
@@ -89,4 +90,28 @@ test("recognizer failures are isolated", async () => {
     recognizers: { sonarqube: () => { throw new Error("broken recognizer"); } },
   });
   assert.deepEqual(result, summary({ pullRequests: 1, errors: ["recognizer sonar-v1: broken recognizer"] }));
+});
+
+test("trigger drift disables only that trigger for later cycles", async () => {
+  const controller = new AbortController();
+  let sleeps = 0;
+  let emissions = 0;
+  const result = await runGitHubConnector({
+    config,
+    client: clientFor(),
+    emitter: {
+      emit: async () => {
+        emissions += 1;
+        throw new GitHubRelayEmitterError("trigger_drift", "drift");
+      },
+    },
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 2) controller.abort();
+    },
+    signal: controller.signal,
+  });
+  assert.equal(emissions, 1);
+  assert.equal(result.candidates, 1);
+  assert.equal(result.errors.length, 1);
 });

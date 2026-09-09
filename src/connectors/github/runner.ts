@@ -243,6 +243,7 @@ export async function runGitHubConnector(options: GitHubConnectorRunOptions): Pr
   const sleep = options.sleep ?? DEFAULT_SLEEP;
   const state = options.state ?? new Map<string, RepositoryState>();
   const total = emptySummary(options.config.repositories.length);
+  const disabledTriggers = options.disabledTriggers ?? new Set<string>();
   const merge = (summary: ConnectorSummary): void => {
     total.pullRequests += summary.pullRequests;
     total.candidates += summary.candidates;
@@ -253,7 +254,7 @@ export async function runGitHubConnector(options: GitHubConnectorRunOptions): Pr
   };
   do {
     if (signal.aborted) break;
-    const cycle = await runGitHubCycle({ ...options, signal, sleep, state });
+    const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers });
     merge(cycle);
     if (options.once || options.discover || signal.aborted) break;
     try { await sleep(options.config.pollIntervalMs, signal); } catch (error) { if (!isAbort(error, signal)) throw error; break; }
