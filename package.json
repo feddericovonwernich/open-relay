@@ -1,5 +1,11 @@
 {
   "name": "open-relay",
+  "description": "A local durable event relay for AI harnesses, subprocess plugins, and external connectors.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feddericovonwernich/open-relay.git"
+  },
   "private": true,
   "bin": { "relay": "./dist/src/cli.js" },
   "type": "module",
