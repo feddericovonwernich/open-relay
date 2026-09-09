@@ -117,3 +117,27 @@ test("isolates trigger drift and unknown definitions without leaking secrets", a
     });
   }
 });
+
+test("an aborted emission does not cancel shared credential issuance", async () => {
+  let resolveCredential!: (value: Response) => void;
+  const credential = new Promise<Response>((resolve) => { resolveCredential = resolve; });
+  let credentials = 0;
+  let events = 0;
+  const fetcher = async (input: URL | RequestInfo): Promise<Response> => {
+    if (requestUrl(input).pathname === "/v1/credentials") {
+      credentials += 1;
+      return credential;
+    }
+    events += 1;
+    return response(201, { event: { id: `event-${events}` } });
+  };
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+  const controller = new AbortController();
+  const aborted = emitter.emit(trigger, snapshot, candidate, controller.signal);
+  const healthy = emitter.emit(trigger, snapshot, candidate);
+  controller.abort();
+  await assert.rejects(aborted, (error: unknown) => error === controller.signal.reason);
+  resolveCredential(response(201, { token: "producer-secret" }));
+  assert.equal(await healthy, "emitted");
+  assert.equal(credentials, 1);
+});

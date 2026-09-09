@@ -67,6 +67,30 @@ function relayError(body: unknown): { code?: string; message?: string } {
     message: typeof body.error.message === "string" ? body.error.message : undefined,
   };
 }
+function isAbortError(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "name" in value && value.name === "AbortError";
+}
+
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      cleanup();
+      reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    };
+    const cleanup = (): void => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then((value) => {
+      cleanup();
+      resolve(value);
+    }, (error: unknown) => {
+      cleanup();
+      reject(error);
+    });
+  });
+}
+
 
 export function completionKey(candidate: CompletionCandidate): string {
   return `github:${candidate.repositoryId}:${candidate.triggerId}:${candidate.artifactKind}:${candidate.artifactId}`;
@@ -94,6 +118,7 @@ export class GitHubRelayEmitter {
         },
       });
     } catch (error) {
+      if (init.signal?.aborted || isAbortError(error)) throw error;
       const message = safeText(error instanceof Error ? error.message : error, [this.adminToken, token]);
       throw new GitHubRelayEmitterError("relay_unavailable", message);
     }
@@ -101,19 +126,18 @@ export class GitHubRelayEmitter {
 
   private producerToken(repositoryId: number, signal?: AbortSignal): Promise<string> {
     const existing = this.producerTokens.get(repositoryId);
-    if (existing) return existing;
-    const pending = this.issueProducerToken(repositoryId, signal);
+    if (existing) return abortable(existing, signal);
+    const pending = this.issueProducerToken(repositoryId);
     this.producerTokens.set(repositoryId, pending);
     void pending.catch(() => {
       if (this.producerTokens.get(repositoryId) === pending) this.producerTokens.delete(repositoryId);
     });
-    return pending;
+    return abortable(pending, signal);
   }
 
-  private async issueProducerToken(repositoryId: number, signal?: AbortSignal): Promise<string> {
+  private async issueProducerToken(repositoryId: number): Promise<string> {
     const response = await this.request("/v1/credentials", this.adminToken, {
       method: "POST",
-      signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scope: "producer", subjectId: `connector:github:${repositoryId}` }),
     });
