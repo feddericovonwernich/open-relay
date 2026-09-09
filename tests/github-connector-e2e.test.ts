@@ -78,8 +78,8 @@ function config(apiBaseUrl: string, emitType = eventType) {
   };
 }
 
-async function githubHarness(): Promise<{ github: FakeGitHubServer; heads: { current: string; staleOnVerify: boolean }; client: GitHubClient }> {
-  const heads = { current: "sha-1", staleOnVerify: false };
+async function githubHarness(): Promise<{ github: FakeGitHubServer; heads: { current: string; staleOnVerify: boolean; outageCandidate: boolean }; client: GitHubClient }> {
+  const heads = { current: "sha-1", staleOnVerify: false, outageCandidate: false };
   const openPath = `/repos/${repo}/pulls?state=open&per_page=100`;
   const closedPath = `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
   const scripts: Record<string, ReturnType<typeof json> | ((request: { headers: Record<string, string | string[] | undefined> }, count: number) => ReturnType<typeof json>)> = {
@@ -87,13 +87,21 @@ async function githubHarness(): Promise<{ github: FakeGitHubServer; heads: { cur
       if (request.headers["if-none-match"] === "open-1" && heads.current === "sha-1") return { status: 304, headers: { etag: "open-1" } };
       return json([pr(1, "open", heads.current), pr(2, "open", "sha-2", "2020-01-01T00:00:00Z")], { etag: heads.current === "sha-1" ? "open-1" : "open-2" });
     },
-    [closedPath]: json([pr(3, "closed", "sha-3")], { etag: "closed-1" }),
+    [closedPath]: json([pr(3, "closed", "sha-3"), pr(4, "closed", "sha-4", "2020-01-01T00:00:00Z")], { etag: "closed-1" }),
     [`/repos/${repo}/commits/sha-1/check-runs?status=completed&filter=all&per_page=100`]: json({ total_count: 2, check_runs: [check(101, "SonarQube Quality Gate", "sha-1", 11, "sonarqube"), check(102, "Cursor Bugbot", "sha-1", 22, "cursor", "neutral")] }),
     [`/repos/${repo}/pulls/1/reviews?per_page=100`]: json([review(201, "sha-1")]),
-    [`/repos/${repo}/commits/sha-2/check-runs?status=completed&filter=all&per_page=100`]: json({ total_count: 1, check_runs: [check(301, "SonarQube Quality Gate", "sha-2", 11, "sonarqube")] }),
+    [`/repos/${repo}/commits/sha-2/check-runs?status=completed&filter=all&per_page=100`]: () => json({
+      total_count: heads.outageCandidate ? 2 : 1,
+      check_runs: [
+        check(301, "SonarQube Quality Gate", "sha-2", 11, "sonarqube"),
+        ...(heads.outageCandidate ? [check(302, "SonarQube Quality Gate", "sha-2", 11, "sonarqube")] : []),
+      ],
+    }),
+    [`/repos/${repo}/commits/sha-4/check-runs?status=completed&filter=all&per_page=100`]: json({ total_count: 1, check_runs: [check(401, "SonarQube Quality Gate", "sha-4", 11, "sonarqube")] }),
     [`/repos/${repo}/pulls/1/reviews?per_page=100&page=2`]: json([]),
     [`/repos/${repo}/commits/sha-3/check-runs?status=completed&filter=all&per_page=100`]: json({ total_count: 0, check_runs: [] }),
     [`/repos/${repo}/pulls/3/reviews?per_page=100`]: json([]),
+    [`/repos/${repo}/pulls/4/reviews?per_page=100`]: json([]),
     [`/repos/${repo}/pulls/2/reviews?per_page=100`]: json([]),
     [`/repos/${repo}/pulls/1`]: (request, count) => {
       if (heads.staleOnVerify && count === 0) heads.current = "sha-2";
@@ -101,6 +109,7 @@ async function githubHarness(): Promise<{ github: FakeGitHubServer; heads: { cur
     },
     [`/repos/${repo}/pulls/2`]: json(pr(2, "open", "sha-2", "2020-01-01T00:00:00Z")),
     [`/repos/${repo}/pulls/3`]: json(pr(3, "closed", "sha-3")),
+    [`/repos/${repo}/pulls/4`]: json(pr(4, "closed", "sha-4", "2020-01-01T00:00:00Z")),
   };
   const github = await fakeGitHubServer(scripts);
   return { github, heads, client: new GitHubClient({ baseUrl: github.url, apiVersion: "2026-03-10", token: secret }) };
@@ -144,7 +153,9 @@ test("real fake GitHub and real Relay reconcile all providers and replay after r
     assert.ok(github.count(`/repos/${repo}/pulls?state=open&per_page=100`) >= 3);
     assert.ok(github.count(`/repos/${repo}/commits/sha-2/check-runs?status=completed&filter=all&per_page=100`) >= 1, "old open PR is polled");
     assert.ok(github.count(`/repos/${repo}/commits/sha-3/check-runs?status=completed&filter=all&per_page=100`) >= 1, "recent closed PR is polled");
-    assert.equal(github.count(`/repos/${repo}/commits/sha-4/check-runs?status=completed&filter=all&per_page=100`), 0, "old closed PR is not polled");
+    assert.equal(github.count(`/repos/${repo}/commits/sha-4/check-runs?status=completed&filter=all&per_page=100`), 0, "old closed PR checks are not polled");
+    assert.equal(github.count(`/repos/${repo}/pulls/4/reviews?per_page=100`), 0, "old closed PR reviews are not polled");
+    assert.equal(github.count(`/repos/${repo}/pulls/4`), 0, "old closed PR head is not fetched");
   } finally { await github.close(); await relay.close(); }
 });
 
@@ -161,12 +172,18 @@ test("stale head, Relay outage recovery, and trigger drift isolate candidates", 
     const recovered = await runGitHubConnector({ config: cfg, client: new GitHubClient({ baseUrl: fixture.github.url, apiVersion: "2026-03-10", token: secret }), emitter: new GitHubRelayEmitter({ baseUrl: relay.base, adminToken: relay.server.adminToken }), once: true });
     assert.equal(recovered.emitted, 1);
     assert.equal(relay.store.countEvents(), 1);
+    fixture.heads.outageCandidate = true;
     const outage = await runGitHubConnector({ config: cfg, client: new GitHubClient({ baseUrl: fixture.github.url, apiVersion: "2026-03-10", token: secret }), emitter: new GitHubRelayEmitter({ baseUrl: "http://127.0.0.1:1", adminToken: "relay-secret" }), once: true });
     assert.equal(outage.emitted, 0);
+    assert.equal(relay.store.countEvents(), 1, "Relay outage must not accept the first-seen candidate");
+    assert.equal(relay.store.snapshotAtHighWater().snapshot.events.some((event) => String((event.payload as Record<string, unknown>).artifact && ((event.payload as Record<string, unknown>).artifact as Record<string, unknown>).id) === "302"), false);
     const outageRecovery = await runGitHubConnector({ config: cfg, client: fixture.client, emitter: new GitHubRelayEmitter({ baseUrl: relay.base, adminToken: relay.server.adminToken }), once: true });
-    assert.equal(outageRecovery.emitted, 0);
+    assert.equal(outageRecovery.emitted, 1, "first-seen candidate emits once after Relay recovery");
     assert.equal(outageRecovery.replayed, 1);
-    assert.equal(relay.store.countEvents(), 1);
+    assert.equal(relay.store.countEvents(), 2);
+    const recoveredIds = relay.store.snapshotAtHighWater().snapshot.events.map((event) => String(((event.payload as Record<string, unknown>).artifact as Record<string, unknown>).id)).sort();
+    assert.deepEqual(recoveredIds, ["301", "302"]);
+    fixture.heads.outageCandidate = false;
     fixture.heads.current = "sha-1";
     const driftConfig = { ...cfg, triggers: [{ ...cfg.triggers[0], id: "bad", emit: { type: "missing.event", version: 1 } }, cfg.triggers[1], cfg.triggers[2]] };
     const drift = await runGitHubConnector({ config: driftConfig, client: fixture.client, emitter: new GitHubRelayEmitter({ baseUrl: relay.base, adminToken: relay.server.adminToken }), once: true });
