@@ -110,8 +110,8 @@ test("both runner entry points validate targeted selection before repository acc
   const multiConfig = {
     ...config,
     repositories: [
-      { name: "octo/repo", mode: "configured-tools" },
-      { name: "octo/other", mode: "configured-tools" },
+      { name: "octo/repo", mode: "configured-tools" as const },
+      { name: "octo/other", mode: "configured-tools" as const },
     ],
   };
   await assert.rejects(runGitHubConnector({ config: multiConfig, client, pullRequestNumber: 1 }), /exactly one configured repository/);
@@ -229,8 +229,8 @@ test("fatal GitHub auth aborts sibling repository requests", async () => {
     config: {
       ...config,
       repositories: [
-        { name: "octo/repo", mode: "configured-tools" },
-        { name: "octo/other", mode: "configured-tools" },
+        { name: "octo/repo", mode: "configured-tools" as const },
+        { name: "octo/other", mode: "configured-tools" as const },
       ],
     },
     client,
@@ -291,8 +291,8 @@ test("transient backoff skips only an ineligible repository on the next cycle", 
     config: {
       ...config,
       repositories: [
-        { name: "octo/bad", mode: "configured-tools" },
-        { name: "octo/good", mode: "configured-tools" },
+        { name: "octo/bad", mode: "configured-tools" as const },
+        { name: "octo/good", mode: "configured-tools" as const },
       ],
     },
     client,
