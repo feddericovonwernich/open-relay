@@ -1,5 +1,10 @@
 export type RecognizerId = "sonarqube" | "copilot-review" | "cursor-bugbot";
 
+export interface GitHubRepositoryConfig {
+  name: string;
+  mode: "configured-tools" | "generic-check-runs";
+}
+
 export interface GitHubConnectorConfig {
   connector: "github";
   apiBaseUrl: string;
@@ -7,7 +12,7 @@ export interface GitHubConnectorConfig {
   tokenEnv: string;
   pollIntervalMs: number;
   lookbackHours: number;
-  repositories: string[];
+  repositories: GitHubRepositoryConfig[];
   triggers: TriggerConfig[];
   aggregate?: {
     id: string;

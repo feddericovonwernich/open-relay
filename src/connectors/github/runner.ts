@@ -4,7 +4,7 @@ import { discoverPullRequest, discoverPullRequests, deriveSnapshotRequirements, 
 import { recognizeSonarQube } from "./recognizers/sonarqube.ts";
 import { recognizeCopilotReviews } from "./recognizers/copilot.ts";
 import { recognizeCursorBugbot } from "./recognizers/bugbot.ts";
-import type { GitHubConnectorConfig, CompletionCandidate, PrSnapshot, TriggerConfig, RecognizerId } from "./types.ts";
+import type { GitHubConnectorConfig, GitHubRepositoryConfig, CompletionCandidate, PrSnapshot, TriggerConfig, RecognizerId } from "./types.ts";
 
 export interface ConnectorSummary {
   repositories: number;
@@ -187,24 +187,25 @@ function stateFor(states: Map<string, RepositoryState>, repository: string): Rep
 async function runRepository(
   options: GitHubCycleOptions,
   client: Client,
-  repository: string,
+  repository: GitHubRepositoryConfig,
   summary: ConnectorSummary,
   states: Map<string, RepositoryState>,
   signal: AbortSignal,
   now: () => number,
   onFatal: (error: unknown) => void,
 ): Promise<void> {
-  const state = stateFor(states, repository);
+  const repositoryName = repository.name;
+  const state = stateFor(states, repositoryName);
   if (state.disabled || signal.aborted || now() < state.nextEligibleAt) return;
   try {
     const pullRequests = options.pullRequestNumber === undefined
-      ? await discoverPullRequests(client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal)
-      : [await discoverPullRequest(client, repository, options.pullRequestNumber, signal)];
+      ? await discoverPullRequests(client, repositoryName, now() - options.config.lookbackHours * 60 * 60 * 1000, signal)
+      : [await discoverPullRequest(client, repositoryName, options.pullRequestNumber, signal)];
     summary.pullRequests += pullRequests.length;
     state.transientDelay = 0;
     state.nextEligibleAt = 0;
     const requirements = deriveSnapshotRequirements(options.config.triggers);
-    const snapshots = await mapConcurrent(pullRequests, 4, (pullRequest) => loadPrSnapshot(client, repository, pullRequest, requirements, signal));
+    const snapshots = await mapConcurrent(pullRequests, 4, (pullRequest) => loadPrSnapshot(client, repositoryName, pullRequest, requirements, signal));
     for (const snapshot of snapshots) {
       if (options.discover) {
         for (const identity of discoveryIdentities(snapshot)) options.onDiscovery?.({ repository: snapshot.repository.fullName, pullRequest: snapshot.pullRequest.number, ...identity });
@@ -230,7 +231,7 @@ async function runRepository(
           if (options.discover || options.emitter === undefined) continue;
           try {
             const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
-            const current = await verifyHead({ repository, pullRequestNumber: candidate.pullRequestNumber, artifactHeadSha: candidate.artifactHeadSha }, signal);
+            const current = await verifyHead({ repository: repositoryName, pullRequestNumber: candidate.pullRequestNumber, artifactHeadSha: candidate.artifactHeadSha }, signal);
             if (!current) {
               summary.stale += 1;
               logCandidate(options.log, snapshot, candidate, "stale");
@@ -273,7 +274,7 @@ async function runRepository(
         try {
           const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
           const current = await verifyHead({
-            repository,
+            repository: repositoryName,
             pullRequestNumber: snapshot.pullRequest.number,
             artifactHeadSha: snapshot.pullRequest.headSha,
           }, signal);
@@ -305,16 +306,16 @@ async function runRepository(
     if (isAbort(error, signal)) return;
     if (isNotFound(error)) {
       state.disabled = true;
-      summary.errors.push(`repository ${repository}: not found`);
+      summary.errors.push(`repository ${repositoryName}: not found`);
       return;
     }
     if (isTransient(error)) {
       state.transientDelay = state.transientDelay === 0 ? options.config.pollIntervalMs : Math.min(options.config.pollIntervalMs * 8, state.transientDelay * 2);
       state.nextEligibleAt = now() + state.transientDelay;
-      summary.errors.push(`repository ${repository}: ${errorText(error)}`);
+      summary.errors.push(`repository ${repositoryName}: ${errorText(error)}`);
       return;
     }
-    summary.errors.push(`repository ${repository}: ${errorText(error)}`);
+    summary.errors.push(`repository ${repositoryName}: ${errorText(error)}`);
   }
 }
 function validatePullRequestSelection(config: GitHubConnectorConfig, pullRequestNumber: number | undefined): void {

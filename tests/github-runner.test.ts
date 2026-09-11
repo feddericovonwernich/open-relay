@@ -18,7 +18,7 @@ const config: GitHubConnectorConfig = {
   tokenEnv: "GITHUB_TOKEN",
   pollIntervalMs: 5_000,
   lookbackHours: 24,
-  repositories: ["octo/repo"],
+  repositories: [{ name: "octo/repo", mode: "configured-tools" }],
   triggers: [trigger],
 };
 const aggregateTrigger: TriggerConfig = {
@@ -104,7 +104,13 @@ test("both runner entry points validate targeted selection before repository acc
     getPullRequest: async () => { calls.push("get"); return pullRequest; },
   };
   await assert.rejects(runGitHubCycle({ config, client, pullRequestNumber: 0 }), /positive safe integer/);
-  const multiConfig = { ...config, repositories: ["octo/repo", "octo/other"] };
+  const multiConfig = {
+    ...config,
+    repositories: [
+      { name: "octo/repo", mode: "configured-tools" },
+      { name: "octo/other", mode: "configured-tools" },
+    ],
+  };
   await assert.rejects(runGitHubConnector({ config: multiConfig, client, pullRequestNumber: 1 }), /exactly one configured repository/);
   await assert.rejects(runGitHubCycle({ config: multiConfig, client, pullRequestNumber: 1 }), /exactly one configured repository/);
   assert.deepEqual(calls, []);
@@ -196,7 +202,7 @@ test("all GitHub requests share a global concurrency ceiling of four", async () 
     listReviews: async () => { await request(); return []; },
     getPullRequest: async () => { await request(); return pullRequest; },
   };
-  const result = await runGitHubCycle({ config: { ...config, repositories }, client, discover: true });
+  const result = await runGitHubCycle({ config: { ...config, repositories: repositories.map((name) => ({ name, mode: "configured-tools" as const })) }, client, discover: true });
   assert.equal(result.pullRequests, repositories.length);
   assert.equal(activeByRequest.maximum, 4);
 });
@@ -214,7 +220,16 @@ test("fatal GitHub auth aborts sibling repository requests", async () => {
     listReviews: async () => [],
     getPullRequest: async () => pullRequest,
   };
-  await assert.rejects(runGitHubCycle({ config: { ...config, repositories: ["octo/repo", "octo/other"] }, client }), /bad token/);
+  await assert.rejects(runGitHubCycle({
+    config: {
+      ...config,
+      repositories: [
+        { name: "octo/repo", mode: "configured-tools" },
+        { name: "octo/other", mode: "configured-tools" },
+      ],
+    },
+    client,
+  }), /bad token/);
   assert.equal(siblingAborted, true);
 });
 
@@ -265,7 +280,19 @@ test("transient backoff skips only an ineligible repository on the next cycle", 
     listReviews: async () => [],
     getPullRequest: async () => pullRequest,
   };
-  const cycleOptions = { config: { ...config, repositories: ["octo/bad", "octo/good"] }, client, state, now: () => now, discover: true };
+  const cycleOptions = {
+    config: {
+      ...config,
+      repositories: [
+        { name: "octo/bad", mode: "configured-tools" },
+        { name: "octo/good", mode: "configured-tools" },
+      ],
+    },
+    client,
+    state,
+    now: () => now,
+    discover: true,
+  };
   await runGitHubCycle(cycleOptions);
   now = 1000;
   const second = await runGitHubCycle(cycleOptions);

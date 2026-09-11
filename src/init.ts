@@ -55,7 +55,7 @@ function githubFiles(repository: string): Files {
     tokenEnv: "GITHUB_TOKEN",
     pollIntervalMs: 15000,
     lookbackHours: 24,
-    repositories: [repository],
+    repositories: [{ name: repository, mode: "configured-tools" }],
     triggers: [
       {
         id: "sonarqube-completed-v1",

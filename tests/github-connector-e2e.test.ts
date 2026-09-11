@@ -77,7 +77,7 @@ async function relayHarness(): Promise<RelayHarness> {
 function config(apiBaseUrl: string, emitType = eventType) {
   return {
     connector: "github" as const, apiBaseUrl, apiVersion: "2026-03-10", tokenEnv: "GITHUB_TOKEN",
-    pollIntervalMs: 5000, lookbackHours: 720, repositories: [repo],
+    pollIntervalMs: 5000, lookbackHours: 720, repositories: [{ name: repo, mode: "configured-tools" }],
     triggers: [
       { id: "sonar", recognizer: "sonarqube" as const, match: { checkNames: ["SonarQube Quality Gate"], appIds: [11], appSlugs: ["sonarqube"] }, emit: { type: emitType, version: 1 } },
       { id: "copilot", recognizer: "copilot-review" as const, match: { userIds: [77], appUrls: ["https://github.com/apps/copilot"], logins: ["github-copilot"] }, emit: { type: emitType, version: 1 } },
