@@ -218,7 +218,7 @@ test("combined discovery loads configured checks and reviews but skips current c
   const copilotTrigger: TriggerConfig = {
     id: "copilot-v1",
     recognizer: "copilot-review",
-    match: { checkNames: [], appIds: [], appSlugs: [] },
+    match: { userIds: [], appUrls: [], logins: [] },
     emit: { type: "pr.automation.completed", version: 1 },
   };
   const client = {

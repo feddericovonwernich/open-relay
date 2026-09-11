@@ -328,7 +328,7 @@ async function runRepository(
               artifactHeadSha: snapshot.pullRequest.headSha,
             }, signal);
             if (current) {
-              const result = await options.emitter.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
+              const result = await options.emitter!.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
               if (result === "emitted") summary.emitted += 1;
               else summary.replayed += 1;
             }
