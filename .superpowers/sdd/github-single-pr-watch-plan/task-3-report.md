@@ -39,3 +39,9 @@
   - Replaced membership hash temporarily with a constant: `node --test tests/github-emitter.test.ts tests/github-runner.test.ts` failed key regex and distinct-key assertions.
 - Green: `node --test tests/github-emitter.test.ts tests/github-runner.test.ts` — 28 tests passed, 0 failed.
 - Follow-up commit: `58d4dc2`.
+
+## 409 drift coverage
+- Added an aggregate `aggregate_drift`/HTTP 409 contract proving individual emissions continue and only the aggregate ID is disabled.
+- TDD red: temporarily restricted runner handling to `aggregate_invalid`; `node --test tests/github-runner.test.ts` left the 409 case without the disabled ID.
+- Green: `node --test tests/github-emitter.test.ts tests/github-runner.test.ts` — 29 tests passed, 0 failed.
+- Follow-up commit: `e4e0a74`.
