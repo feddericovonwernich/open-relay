@@ -642,7 +642,7 @@ class SqliteStore implements Store {
     if (definition.requires.structuredOutput && !worker.structuredOutput) return false;
     const requiredContext = Math.max(definition.requires.minContextTokens, worker.systemReserveTokens + definition.requires.maxInputTokens + definition.requires.maxOutputTokens);
     return worker.contextTokens >= requiredContext
-      && (worker.correlationId === undefined || String(row.correlation_id) === worker.correlationId);
+      && (worker.correlationId === undefined || (row.correlation_id !== null && String(row.correlation_id) === worker.correlationId));
   }
 
   private transition(authority: DeliveryAuthority, states: readonly string[], nextState: string | undefined, update: { kind: string; data: unknown }): void {

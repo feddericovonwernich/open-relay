@@ -586,7 +586,7 @@ Tokens, headers, comment bodies, source text, and full provider payloads are nev
 - The feature is named the GitHub connector; provider logic is named recognizers; mappings are triggers.
 - Initial deployment is a separate local polling process.
 - One normalized completion event shape serves all providers.
-- Completion emits once per provider artifact, not after all providers aggregate.
+- Completion emits once per provider artifact; a configured aggregate also emits after every trigger settles.
 - Open Relay’s deterministic idempotency is the durable seen-set.
 - Sonar GitHub checks require operator-pinned app identity.
 - No provider comment or body text enters the normalized payload.

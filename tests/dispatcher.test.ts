@@ -106,6 +106,16 @@ test("correlation-filtered workers lease only matching events while broad worker
   assert.equal(broadDelivery?.event.id, "pr-100");
 });
 
+test("correlation-filtered workers do not treat an uncorrelated event as the null selector", async () => {
+  const store = openStore(":memory:", clock);
+  store.installRevisions([revision]);
+  store.accept({ id: "legacy", producerId: "browser", idempotencyKey: "legacy", payload: { variant: "dark" }, revision });
+  const credentials = new CredentialStore({ now: clock });
+  const dispatcher = new Dispatcher(store, credentials, { now: clock });
+  const selected = dispatcher.registerWorker(worker({ workerId: "worker:null", correlationId: "null" }));
+  assert.equal(await dispatcher.poll(selected, AbortSignal.timeout(5)), undefined);
+});
+
 test("correlation-filtered polling stays pending for wrong events and wakes for an exact match", async () => {
   const store = openStore(":memory:");
   store.installRevisions([revision]);
