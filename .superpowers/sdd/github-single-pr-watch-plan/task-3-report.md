@@ -20,7 +20,7 @@
 - `node --test tests/github-emitter.test.ts tests/github-runner.test.ts`: 25 tests passed, 0 failed.
 
 ## Commit
-- Pending final commit hash.
+- `7e93616` (implementation commit; this report is finalized in the follow-up commit).
 
 ## Self-review
 - Aggregate keys sort only trigger/kind/id membership tuples and exclude mapping type/version.
