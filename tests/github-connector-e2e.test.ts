@@ -12,6 +12,7 @@ import { GitHubClient } from "../src/connectors/github/client.ts";
 import { GitHubRelayEmitter } from "../src/connectors/github/emitter.ts";
 import { runGitHubConnector } from "../src/connectors/github/runner.ts";
 import { runCli } from "../src/cli.ts";
+import { fakeGitHubServer, json, type FakeGitHubScript, type FakeGitHubServer } from "./github-helpers.ts";
 import type { GitHubConnectorConfig } from "../src/connectors/github/types.ts";
 
 const repo = "octo/repo";
