@@ -41,7 +41,7 @@
 - Follow-up commit: `58d4dc2`.
 
 ## 409 drift coverage
-- Added an aggregate `aggregate_drift`/HTTP 409 contract proving individual emissions continue and only the aggregate ID is disabled.
-- TDD red: temporarily restricted runner handling to `aggregate_invalid`; `node --test tests/github-runner.test.ts` left the 409 case without the disabled ID.
+- Added a two-cycle aggregate `aggregate_drift`/HTTP 409 contract proving the first mapping failure disables only the aggregate while both cycles continue individual emissions.
+- TDD red: temporarily removed aggregate-ID disablement; `node --test tests/github-runner.test.ts` retried the 409 aggregate on cycle two (`2 !== 1`).
 - Green: `node --test tests/github-emitter.test.ts tests/github-runner.test.ts` — 29 tests passed, 0 failed.
-- Follow-up commit: `e4e0a74`.
+- Follow-up commit: `1665ce4`.
