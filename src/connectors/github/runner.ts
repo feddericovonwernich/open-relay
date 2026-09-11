@@ -16,8 +16,7 @@ export interface ConnectorSummary {
   errors: string[];
 }
 
-type Client = Pick<GitHubClient, "listOpenPullRequests" | "listRecentClosedPullRequests" | "listCompletedCheckRuns" | "listReviews" | "getPullRequest">;
-type Emitter = Pick<GitHubRelayEmitter, "emit" | "emitAggregate">;
+type Client = Pick<GitHubClient, "listOpenPullRequests" | "listRecentClosedPullRequests" | "listCompletedCheckRuns" | "listCurrentCheckRuns" | "listReviews" | "getPullRequest">;
 type Sleep = (milliseconds: number, signal: AbortSignal) => Promise<void>;
 type Log = (value: string) => void;
 type HeadVerifier = (candidate: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, signal?: AbortSignal) => Promise<boolean>;
@@ -54,6 +53,7 @@ function limitedClient(client: Client, limiter: RequestLimiter): Client {
     listOpenPullRequests: (repository, signal) => limiter.run(() => client.listOpenPullRequests(repository, signal), signal ?? new AbortController().signal),
     listRecentClosedPullRequests: (repository, cutoff, signal) => limiter.run(() => client.listRecentClosedPullRequests(repository, cutoff, signal), signal ?? new AbortController().signal),
     listCompletedCheckRuns: (repository, sha, signal) => limiter.run(() => client.listCompletedCheckRuns(repository, sha, signal), signal ?? new AbortController().signal),
+    listCurrentCheckRuns: (repository, sha, signal) => limiter.run(() => client.listCurrentCheckRuns(repository, sha, signal), signal ?? new AbortController().signal),
     listReviews: (repository, number, signal) => limiter.run(() => client.listReviews(repository, number, signal), signal ?? new AbortController().signal),
     getPullRequest: (repository, number, signal) => limiter.run(() => client.getPullRequest(repository, number, signal), signal ?? new AbortController().signal),
   };

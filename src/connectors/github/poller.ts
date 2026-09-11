@@ -7,7 +7,7 @@ import type {
 } from "./types.ts";
 
 export interface SnapshotRequirements {
-  checkRuns: boolean;
+  checkRuns: "none" | "completed" | "current";
   reviews: boolean;
 }
 
@@ -16,6 +16,7 @@ type Client = Pick<
   | "listOpenPullRequests"
   | "listRecentClosedPullRequests"
   | "listCompletedCheckRuns"
+  | "listCurrentCheckRuns"
   | "listReviews"
   | "getPullRequest"
 >;
@@ -32,7 +33,7 @@ function assertRepository(pr: GitHubPullRequest, repository: string): void {
 
 export function deriveSnapshotRequirements(triggers: readonly TriggerConfig[]): SnapshotRequirements {
   return {
-    checkRuns: triggers.some((trigger) => trigger.recognizer === "sonarqube" || trigger.recognizer === "cursor-bugbot"),
+    checkRuns: triggers.some((trigger) => trigger.recognizer === "sonarqube" || trigger.recognizer === "cursor-bugbot") ? "completed" : "none",
     reviews: triggers.some((trigger) => trigger.recognizer === "copilot-review"),
   };
 }
@@ -78,7 +79,11 @@ export async function loadPrSnapshot(
 ): Promise<PrSnapshot> {
   assertRepository(pullRequest, repository);
   const [checkRuns, reviews] = await Promise.all([
-    requirements.checkRuns ? client.listCompletedCheckRuns(repository, pullRequest.headSha, signal) : Promise.resolve([]),
+    requirements.checkRuns === "current"
+      ? client.listCurrentCheckRuns(repository, pullRequest.headSha, signal)
+      : requirements.checkRuns === "completed"
+        ? client.listCompletedCheckRuns(repository, pullRequest.headSha, signal)
+        : Promise.resolve([]),
     requirements.reviews ? client.listReviews(repository, pullRequest.number, signal) : Promise.resolve([]),
   ]);
   return {

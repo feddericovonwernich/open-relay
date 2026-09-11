@@ -55,6 +55,7 @@ function clientFor(currentHead = "abc") {
     listRecentClosedPullRequests: async () => [],
     listReviews: async () => [],
     listCompletedCheckRuns: async () => [...snapshot.checkRuns],
+    listCurrentCheckRuns: async () => [...snapshot.checkRuns],
     getPullRequest: async () => ({ ...pullRequest, headSha: currentHead }),
   };
 }
@@ -84,6 +85,7 @@ test("targeted cycle directly loads only the selected pull request", async () =>
       listOpenPullRequests: async () => { calls.push("list-open"); throw new Error("list endpoint must not be called"); },
       listRecentClosedPullRequests: async () => { calls.push("list-closed"); throw new Error("list endpoint must not be called"); },
       listCompletedCheckRuns: async (_repository, headSha) => { calls.push(`checks:${headSha}`); return []; },
+      listCurrentCheckRuns: async (_repository, headSha) => { calls.push(`current-checks:${headSha}`); return []; },
       listReviews: async () => [],
       getPullRequest: async (_repository, number) => { calls.push(`get:${number}`); return target; },
     },
@@ -100,6 +102,7 @@ test("both runner entry points validate targeted selection before repository acc
     listOpenPullRequests: async () => { calls.push("list"); return []; },
     listRecentClosedPullRequests: async () => [],
     listCompletedCheckRuns: async () => [],
+    listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
     getPullRequest: async () => { calls.push("get"); return pullRequest; },
   };
@@ -199,6 +202,7 @@ test("all GitHub requests share a global concurrency ceiling of four", async () 
     listOpenPullRequests: async (repository: string) => { await request(); return [{ ...pullRequest, repositoryFullName: repository }]; },
     listRecentClosedPullRequests: async () => { await request(); return []; },
     listCompletedCheckRuns: async () => { await request(); return []; },
+    listCurrentCheckRuns: async () => { await request(); return []; },
     listReviews: async () => { await request(); return []; },
     getPullRequest: async () => { await request(); return pullRequest; },
   };
@@ -217,6 +221,7 @@ test("fatal GitHub auth aborts sibling repository requests", async () => {
     listOpenPullRequests: async (repository: string, signal?: AbortSignal) => repository === "octo/repo" ? (() => { throw new GitHubClientError("github_auth_failed", "bad token", 401); })() : waitForAbort(signal),
     listRecentClosedPullRequests: async (_repository: string, _cutoff: number, signal?: AbortSignal) => waitForAbort(signal),
     listCompletedCheckRuns: async () => [],
+    listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
     getPullRequest: async () => pullRequest,
   };
@@ -246,6 +251,7 @@ test("caller abort returns an accumulated summary after in-flight requests stop"
     listOpenPullRequests: async (_repository: string, signal?: AbortSignal) => waitForAbort(signal),
     listRecentClosedPullRequests: async (_repository: string, _cutoff: number, signal?: AbortSignal) => waitForAbort(signal),
     listCompletedCheckRuns: async () => [],
+    listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
     getPullRequest: async () => pullRequest,
   };
@@ -277,6 +283,7 @@ test("transient backoff skips only an ineligible repository on the next cycle", 
     },
     listRecentClosedPullRequests: async () => [],
     listCompletedCheckRuns: async () => [],
+    listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
     getPullRequest: async () => pullRequest,
   };

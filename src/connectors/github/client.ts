@@ -230,6 +230,9 @@ export class GitHubClient {
   async listCompletedCheckRuns(repository: string, headSha: string, signal?: AbortSignal): Promise<GitHubCheckRun[]> {
     return this.paginate(this.endpoint(`/repos/${repository}/commits/${headSha}/check-runs?status=completed&filter=all&per_page=100`), (body, url) => listDecoder(body, url, decodeCheckRun, this.diagnosticBuffer, "check_runs"), signal);
   }
+  async listCurrentCheckRuns(repository: string, headSha: string, signal?: AbortSignal): Promise<GitHubCheckRun[]> {
+    return this.paginate(this.endpoint(`/repos/${repository}/commits/${headSha}/check-runs?filter=latest&per_page=100`), (body, url) => listDecoder(body, url, decodeCheckRun, this.diagnosticBuffer, "check_runs"), signal);
+  }
 
   async listReviews(repository: string, number: number, signal?: AbortSignal): Promise<GitHubPullRequestReview[]> {
     return this.paginate(this.endpoint(`/repos/${repository}/pulls/${number}/reviews?per_page=100`), (body, url) => listDecoder(body, url, decodeReview, this.diagnosticBuffer), signal);

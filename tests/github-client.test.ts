@@ -72,6 +72,54 @@ test("paginates check runs and reviews", async () => {
     assert.deepEqual((await api.listReviews(repo, 7)).map((item) => item.id), [3, 4]);
   } finally { await server.close(); }
 });
+test("paginates current check runs with the latest filter and decodes every status", async () => {
+  const currentPath = "/repos/octo/repo/commits/sha/check-runs?filter=latest&per_page=100";
+  const page2 = `${currentPath}&page=2`;
+  const checkRuns = [
+    { id: 1, name: "queued", status: "queued", conclusion: null, head_sha: "sha", completed_at: null, details_url: "", app: null, pull_requests: [] },
+    { id: 2, name: "running", status: "in_progress", conclusion: null, head_sha: "sha", completed_at: null, details_url: null, app: null, pull_requests: [] },
+    { id: 3, name: "done", status: "completed", conclusion: "neutral", head_sha: "sha", completed_at: "2026-09-08T00:00:00Z", details_url: "https://details", app: null, pull_requests: [] },
+  ];
+  const server = await fakeGitHubServer({
+    [currentPath]: json({ total_count: 3, check_runs: checkRuns.slice(0, 2) }, { link: `<${page2}>; rel="next"` }),
+    [page2]: json({ total_count: 1, check_runs: [checkRuns[2]] }),
+  });
+  try {
+    const api = client(server.url);
+    const result = await api.listCurrentCheckRuns(repo, "sha");
+    assert.deepEqual(result.map((check) => [check.id, check.status, check.conclusion]), [
+      [1, "queued", null],
+      [2, "in_progress", null],
+      [3, "completed", "neutral"],
+    ]);
+    assert.deepEqual(server.requests.map((request) => request.url), [currentPath, page2]);
+  } finally { await server.close(); }
+});
+
+test("caches current and completed check-run endpoints independently", async () => {
+  const currentPath = "/repos/octo/repo/commits/sha/check-runs?filter=latest&per_page=100";
+  const completedPath = "/repos/octo/repo/commits/sha/check-runs?status=completed&filter=all&per_page=100";
+  const currentBody = { total_count: 1, check_runs: [{ id: 1, name: "current", status: "in_progress", conclusion: null, head_sha: "sha", completed_at: null, details_url: null, app: null, pull_requests: [] }] };
+  const completedBody = { total_count: 1, check_runs: [{ id: 2, name: "completed", status: "completed", conclusion: "success", head_sha: "sha", completed_at: "2026-09-08T00:00:00Z", details_url: null, app: null, pull_requests: [] }] };
+  const server = await fakeGitHubServer({
+    [currentPath]: [json(currentBody, { etag: "current-v1" }), { status: 304, headers: { etag: "current-v1" } }],
+    [completedPath]: [json(completedBody, { etag: "completed-v1" }), { status: 304, headers: { etag: "completed-v1" } }],
+  });
+  try {
+    const api = client(server.url);
+    assert.equal((await api.listCurrentCheckRuns(repo, "sha"))[0]?.id, 1);
+    assert.equal((await api.listCompletedCheckRuns(repo, "sha"))[0]?.id, 2);
+    assert.equal((await api.listCurrentCheckRuns(repo, "sha"))[0]?.id, 1);
+    assert.equal((await api.listCompletedCheckRuns(repo, "sha"))[0]?.id, 2);
+    const requests = server.requests.filter((request) => request.url === currentPath || request.url === completedPath);
+    assert.equal(requests.length, 4);
+    assert.equal(requests[0]?.headers["if-none-match"], undefined);
+    assert.equal(requests[1]?.headers["if-none-match"], undefined);
+    assert.equal(requests[2]?.headers["if-none-match"], "current-v1");
+    assert.equal(requests[3]?.headers["if-none-match"], "completed-v1");
+  } finally { await server.close(); }
+});
+
 
 test("honors Retry-After and rate-limit reset with injected sleep", async () => {
   const delays: number[] = [];
