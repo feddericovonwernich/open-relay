@@ -1,6 +1,6 @@
 import { GitHubClient, GitHubClientError } from "./client.ts";
 import { GitHubRelayEmitter, GitHubRelayEmitterError } from "./emitter.ts";
-import { discoverPullRequests, deriveSnapshotRequirements, loadPrSnapshot, mapConcurrent, verifyCurrentHead } from "./poller.ts";
+import { discoverPullRequest, discoverPullRequests, deriveSnapshotRequirements, loadPrSnapshot, mapConcurrent, verifyCurrentHead } from "./poller.ts";
 import { recognizeSonarQube } from "./recognizers/sonarqube.ts";
 import { recognizeCopilotReviews } from "./recognizers/copilot.ts";
 import { recognizeCursorBugbot } from "./recognizers/bugbot.ts";
@@ -70,6 +70,7 @@ export interface GitHubCycleOptions {
   log?: Log;
   onDiscovery?: (identity: Record<string, unknown>) => void;
   discover?: boolean;
+  pullRequestNumber?: number;
   state?: Map<string, RepositoryState>;
   disabledTriggers?: Set<string>;
   headVerifier?: HeadVerifier;
@@ -195,7 +196,9 @@ async function runRepository(
   const state = stateFor(states, repository);
   if (state.disabled || signal.aborted || now() < state.nextEligibleAt) return;
   try {
-    const pullRequests = await discoverPullRequests(client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal);
+    const pullRequests = options.pullRequestNumber === undefined
+      ? await discoverPullRequests(client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal)
+      : [await discoverPullRequest(client, repository, options.pullRequestNumber, signal)];
     summary.pullRequests += pullRequests.length;
     state.transientDelay = 0;
     state.nextEligibleAt = 0;
@@ -271,7 +274,18 @@ async function runRepository(
     summary.errors.push(`repository ${repository}: ${errorText(error)}`);
   }
 }
+function validatePullRequestSelection(config: GitHubConnectorConfig, pullRequestNumber: number | undefined): void {
+  if (pullRequestNumber === undefined) return;
+  if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber <= 0) {
+    throw new Error("pull request number must be a positive safe integer");
+  }
+  if (config.repositories.length !== 1) {
+    throw new Error("pull request selection requires exactly one configured repository");
+  }
+}
+
 export async function runGitHubCycle(options: GitHubCycleOptions): Promise<ConnectorSummary> {
+  validatePullRequestSelection(options.config, options.pullRequestNumber);
   const parentSignal = options.signal ?? new AbortController().signal;
   const cycleController = new AbortController();
   const abortCycle = (): void => cycleController.abort();
@@ -302,8 +316,8 @@ export async function runGitHubCycle(options: GitHubCycleOptions): Promise<Conne
   if (fatal !== undefined) throw fatal;
   return summary;
 }
-
 export async function runGitHubConnector(options: GitHubConnectorRunOptions): Promise<ConnectorSummary> {
+  validatePullRequestSelection(options.config, options.pullRequestNumber);
   const signal = options.signal ?? new AbortController().signal;
   const sleep = options.sleep ?? DEFAULT_SLEEP;
   const state = options.state ?? new Map<string, RepositoryState>();

@@ -64,6 +64,40 @@ test("one-shot runner recognizes and emits a current candidate", async () => {
   assert.deepEqual(result, summary({ pullRequests: 1, candidates: 1, emitted: 1 }));
   assert.equal(calls.length, 1);
 });
+test("targeted cycle directly loads only the selected pull request", async () => {
+  const calls: string[] = [];
+  const target = { ...pullRequest, number: 197, headSha: "target-head", url: "https://github.com/octo/repo/pull/197" };
+  const result = await runGitHubCycle({
+    config,
+    client: {
+      listOpenPullRequests: async () => { calls.push("list-open"); throw new Error("list endpoint must not be called"); },
+      listRecentClosedPullRequests: async () => { calls.push("list-closed"); throw new Error("list endpoint must not be called"); },
+      listCompletedCheckRuns: async (_repository, headSha) => { calls.push(`checks:${headSha}`); return []; },
+      listReviews: async () => [],
+      getPullRequest: async (_repository, number) => { calls.push(`get:${number}`); return target; },
+    },
+    pullRequestNumber: 197,
+    discover: true,
+  });
+  assert.equal(result.pullRequests, 1);
+  assert.deepEqual(calls, ["get:197", "checks:target-head"]);
+});
+
+test("both runner entry points validate targeted selection before repository access", async () => {
+  const calls: string[] = [];
+  const client = {
+    listOpenPullRequests: async () => { calls.push("list"); return []; },
+    listRecentClosedPullRequests: async () => [],
+    listCompletedCheckRuns: async () => [],
+    listReviews: async () => [],
+    getPullRequest: async () => { calls.push("get"); return pullRequest; },
+  };
+  await assert.rejects(runGitHubCycle({ config, client, pullRequestNumber: 0 }), /positive safe integer/);
+  const multiConfig = { ...config, repositories: ["octo/repo", "octo/other"] };
+  await assert.rejects(runGitHubConnector({ config: multiConfig, client, pullRequestNumber: 1 }), /exactly one configured repository/);
+  await assert.rejects(runGitHubCycle({ config: multiConfig, client, pullRequestNumber: 1 }), /exactly one configured repository/);
+  assert.deepEqual(calls, []);
+});
 
 test("stale candidates are counted but never emitted", async () => {
   let emitted = false;

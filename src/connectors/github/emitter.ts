@@ -97,6 +97,10 @@ export function completionKey(candidate: CompletionCandidate): string {
   return `github:${candidate.repositoryId}:${candidate.triggerId}:${candidate.artifactKind}:${candidate.artifactId}`;
 }
 
+export function pullRequestCorrelationId(repositoryFullName: string, pullRequestNumber: number): string {
+  return `github:${repositoryFullName.toLowerCase()}:pull-request:${pullRequestNumber}`;
+}
+
 export class GitHubRelayEmitter {
   private readonly baseUrl: string;
   private readonly adminToken: string;
@@ -184,6 +188,7 @@ export class GitHubRelayEmitter {
         version: trigger.emit.version,
         payload,
         idempotencyKey,
+        correlationId: pullRequestCorrelationId(snapshot.repository.fullName, snapshot.pullRequest.number),
       }),
     });
     if (response.status === 201) return "emitted";

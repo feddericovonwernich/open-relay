@@ -289,11 +289,66 @@ test("stream removes reconnect abort listeners after cancellation", async () => 
 });
 
 test("parses positional GitHub connector flags", () => {
-  assert.deepEqual(parseArgs(["connect", "github", "--config", "config.json", "--once", "--discover", "--project-root", "/tmp/project"]), {
+  assert.deepEqual(parseArgs(["connect", "github", "--config", "config.json", "--pull-request", "197", "--once", "--discover", "--project-root", "/tmp/project"]), {
     command: "connect",
     args: ["github"],
-    options: { config: "config.json", once: true, discover: true, "project-root": "/tmp/project" },
+    options: { config: "config.json", "pull-request": "197", once: true, discover: true, "project-root": "/tmp/project" },
   });
+});
+
+test("targeted GitHub connector rejects invalid selectors with exact errors", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-github-"));
+  await mkdir(join(root, ".relay", "connectors"), { recursive: true });
+  await writeFile(join(root, ".relay", "connectors", "github.json"), JSON.stringify({
+    connector: "github",
+    repositories: ["octo/repo"],
+    triggers: [{ id: "sonar-v1", recognizer: "sonarqube", match: { checkNames: ["SonarCloud Code Analysis"], appIds: [42], appSlugs: [] }, emit: { type: "x", version: 1 } }],
+  }));
+  try {
+    for (const [argv, message] of [
+      [["connect", "github", "--pull-request"], "--pull-request requires a value"],
+      [["connect", "github", "--pull-request=0"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=-1"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=1.5"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=1e3"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=abc"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=9007199254740992"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request", "197", "198"], "--pull-request accepts exactly one value"],
+    ] as const) {
+      let stderr = "";
+      const code = await runCli([...argv, "--project-root", root], {
+        cwd: root,
+        stdout: { write: () => undefined },
+        stderr: { write: (value) => { stderr += value; } },
+      });
+      assert.equal(code, 1);
+      assert.equal(stderr, `relay: ${message}\n`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("targeted GitHub connector checks repository count before token or runtime access", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-github-"));
+  await mkdir(join(root, ".relay", "connectors"), { recursive: true });
+  await writeFile(join(root, ".relay", "connectors", "github.json"), JSON.stringify({
+    connector: "github",
+    repositories: ["octo/repo", "octo/other"],
+    triggers: [{ id: "sonar-v1", recognizer: "sonarqube", match: { checkNames: ["SonarCloud Code Analysis"], appIds: [42], appSlugs: [] }, emit: { type: "x", version: 1 } }],
+  }));
+  let stderr = "";
+  try {
+    const code = await runCli(["connect", "github", "--pull-request", "197", "--project-root", root], {
+      cwd: root,
+      stdout: { write: () => undefined },
+      stderr: { write: (value) => { stderr += value; } },
+    });
+    assert.equal(code, 1);
+    assert.equal(stderr, "relay: --pull-request requires exactly one configured repository\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("safe CLI output keeps app identities while removing secrets", () => {

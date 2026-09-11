@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { completionKey, GitHubRelayEmitter } from "../src/connectors/github/emitter.ts";
+import { completionKey, GitHubRelayEmitter, pullRequestCorrelationId } from "../src/connectors/github/emitter.ts";
 import { normalizeCompletion } from "../src/connectors/github/normalize.ts";
 import type { CompletionCandidate, PrSnapshot, TriggerConfig } from "../src/connectors/github/types.ts";
 
@@ -96,8 +96,30 @@ test("issues one repository-scoped producer and distinguishes created from repla
     version: 1,
     payload: normalizeCompletion(snapshot, candidate),
     idempotencyKey: completionKey(candidate),
+    correlationId: "github:example/repo:pull-request:12",
   });
   assert.equal(event.url.includes("producer-secret"), false);
+  assert.equal(JSON.stringify(body).includes("producer-secret"), false);
+});
+test("individual events carry a stable pull-request correlation id", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+    requests.push(new Request(input, init));
+    return requestUrl(input).pathname === "/v1/credentials"
+      ? response(201, { token: "producer-secret" })
+      : response(201, { event: { id: "event-1" } });
+  };
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+  assert.equal(pullRequestCorrelationId("Example/Repo", 12), "github:example/repo:pull-request:12");
+  await emitter.emit(trigger, snapshot, candidate);
+  const event = requests.find((request) => new URL(request.url).pathname === "/v1/events");
+  assert.ok(event);
+  const body = JSON.parse(await event.text()) as Record<string, unknown>;
+  assert.equal(body.idempotencyKey, completionKey(candidate));
+  assert.deepEqual(body.payload, normalizeCompletion(snapshot, candidate));
+  assert.equal(body.correlationId, "github:example/repo:pull-request:12");
+  assert.equal(event.headers.get("Idempotency-Key"), completionKey(candidate));
+  assert.equal(JSON.stringify(body).includes("admin-secret"), false);
   assert.equal(JSON.stringify(body).includes("producer-secret"), false);
 });
 
