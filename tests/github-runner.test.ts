@@ -401,6 +401,37 @@ test("aggregate mapping failures disable only aggregate emission across connecto
   assert.equal(result.errors.filter((error) => error.startsWith("aggregate_invalid:")).length, 1);
 });
 
+test("aggregate drift disables only aggregate emission while individuals continue", async () => {
+  const disabledAggregates = new Set<string>();
+  let individuals = 0;
+  let aggregates = 0;
+  const emitter = {
+    emit: async () => {
+      individuals += 1;
+      return "emitted" as const;
+    },
+    emitAggregate: async () => {
+      aggregates += 1;
+      throw new GitHubRelayEmitterError("aggregate_drift", "mapping drift", 409);
+    },
+  };
+  const recognizers = {
+    sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
+    "cursor-bugbot": () => [candidateFor("bugbot-v1", "bugbot-1", "cursor-bugbot")],
+  };
+  const result = await runGitHubCycle({
+    config: aggregateConfig,
+    client: clientFor(),
+    emitter,
+    recognizers,
+    disabledAggregates,
+  });
+  assert.equal(individuals, 2);
+  assert.equal(aggregates, 1);
+  assert.deepEqual([...disabledAggregates], ["settled-v1"]);
+  assert.deepEqual(result.errors, ["aggregate_drift: mapping drift"]);
+});
+
 test("changed same-head aggregate membership produces a new aggregate", async () => {
   let artifactId = "one";
   const members: string[][] = [];
