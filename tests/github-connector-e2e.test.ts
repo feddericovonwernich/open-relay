@@ -97,6 +97,15 @@ function genericConfig(apiBaseUrl: string): GitHubConnectorConfig {
     triggers: [],
   };
 }
+function combinedConfig(apiBaseUrl: string): GitHubConnectorConfig {
+  return {
+    ...config(apiBaseUrl),
+    repositories: [{
+      name: repo,
+      mode: "configured-tools-and-generic-check-runs",
+    }],
+  };
+}
 
 async function githubHarness(): Promise<{ github: FakeGitHubServer; heads: { current: string; staleOnVerify: boolean; outageCandidate: boolean }; client: GitHubClient }> {
   const heads = { current: "sha-1", staleOnVerify: false, outageCandidate: false };
@@ -473,6 +482,137 @@ test("generic current-head Check Runs settle after two observations and replay f
     assert.equal(replay.emitted, 0);
     assert.equal(replay.replayed, 1);
     assert.equal(relay.store.countEvents(), 1);
+  } finally {
+    await github.close();
+    await relay.close();
+  }
+});
+
+test("combined mode emits three tool events and one all-checks event", async () => {
+  const relay = await relayHarness();
+  const sha = "sha-combined";
+  const openPath = `/repos/${repo}/pulls?state=open&per_page=100`;
+  const closedPath = `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`;
+  const completedPath = `/repos/${repo}/commits/${sha}/check-runs?status=completed&filter=all&per_page=100`;
+  const currentPath = `/repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=100`;
+  const reviewsPath = `/repos/${repo}/pulls/7/reviews?per_page=100`;
+  const associated = (value: Record<string, unknown>) => ({
+    ...value,
+    pull_requests: [{ number: 7 }],
+  });
+  const sonar = associated(check(
+    801,
+    "SonarQube Quality Gate",
+    sha,
+    11,
+    "sonarqube",
+    "success",
+  ));
+  const bugbot = associated(check(
+    802,
+    "Cursor Bugbot",
+    sha,
+    22,
+    "cursor",
+    "neutral",
+  ));
+  const build = associated(check(
+    803,
+    "Build and test",
+    sha,
+    33,
+    "actions",
+    "failure",
+  ));
+  const pendingBuild = {
+    ...build,
+    status: "queued",
+    conclusion: null,
+    completed_at: null,
+  };
+  const github = await fakeGitHubServer({
+    [openPath]: json([pr(7, "open", sha)]),
+    [closedPath]: json([]),
+    [`/repos/${repo}/pulls/7`]: json(pr(7, "open", sha)),
+    [completedPath]: json({
+      total_count: 2,
+      check_runs: [sonar, bugbot],
+    }),
+    [reviewsPath]: json([review(804, sha)]),
+    [currentPath]: (_request, count) => json({
+      total_count: 3,
+      check_runs: count === 0
+        ? [sonar, bugbot, pendingBuild]
+        : [sonar, bugbot, build],
+    }),
+  });
+  const controller = new AbortController();
+  let sleeps = 0;
+
+  try {
+    const cfg = combinedConfig(github.url);
+    const continuous = await runGitHubConnector({
+      config: cfg,
+      client: new GitHubClient({
+        baseUrl: github.url,
+        apiVersion: "2026-03-10",
+        token: secret,
+      }),
+      emitter: new GitHubRelayEmitter({
+        baseUrl: relay.base,
+        adminToken: relay.server.adminToken,
+      }),
+      signal: controller.signal,
+      sleep: async () => {
+        sleeps += 1;
+        const count = relay.store.countEvents();
+        if (sleeps === 1 || sleeps === 2) assert.equal(count, 3);
+        if (sleeps === 3) {
+          assert.equal(count, 4);
+          controller.abort();
+        }
+      },
+    });
+
+    assert.equal(continuous.emitted, 4);
+    assert.equal(relay.store.countEvents(), 4);
+    const events = relay.store.snapshotAtHighWater().snapshot.events;
+    assert.equal(events.filter((event) => event.type === "pr.automation.completed").length, 3);
+    assert.equal(events.filter((event) => event.type === "pr.ci.settled").length, 1);
+    assert.equal(events.some((event) => event.type === "pr.automation.settled"), false);
+    assert.equal(events.every((event) =>
+      event.correlationId === "github:octo/repo:pull-request:7"), true);
+    const ci = events.find((event) => event.type === "pr.ci.settled");
+    const payload = ci?.payload as {
+      outcome: string;
+      checks: Array<{ name: string; conclusion: string | null }>;
+    };
+    assert.equal(payload.outcome, "failure");
+    assert.deepEqual(
+      payload.checks.map(({ name, conclusion }) => ({ name, conclusion })),
+      [
+        { name: "SonarQube Quality Gate", conclusion: "success" },
+        { name: "Cursor Bugbot", conclusion: "neutral" },
+        { name: "Build and test", conclusion: "failure" },
+      ],
+    );
+
+    const replay = await runGitHubConnector({
+      config: cfg,
+      client: new GitHubClient({
+        baseUrl: github.url,
+        apiVersion: "2026-03-10",
+        token: secret,
+      }),
+      emitter: new GitHubRelayEmitter({
+        baseUrl: relay.base,
+        adminToken: relay.server.adminToken,
+      }),
+      once: true,
+    });
+    assert.equal(replay.emitted, 0);
+    assert.equal(replay.replayed, 4);
+    assert.equal(relay.store.countEvents(), 4);
   } finally {
     await github.close();
     await relay.close();
