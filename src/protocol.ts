@@ -35,7 +35,9 @@ export interface WorkerCapabilities {
   contextTokens: number;
   systemReserveTokens: number;
   maxConcurrent: number;
+  correlationId?: string;
 }
+
 
 export interface ProcessWorker {
   workerId: "relay:process";
@@ -57,6 +59,7 @@ export interface EventEnvelope {
 
 export interface Delivery {
   event: EventEnvelope;
+  outputSchema: object;
   attempt: number;
   workerId: string;
   leaseId: string;

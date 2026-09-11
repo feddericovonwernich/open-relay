@@ -17,6 +17,7 @@ const contextInput = (overrides: Partial<ContextInput> = {}): ContextInput => ({
 });
 const delivery = (payload: unknown = { request: "hello" }): Delivery => ({
   event: { id: "event-1", producerId: "producer", idempotencyKey: "key", type: "demo", version: 1, definitionRevision: "rev", payload, payloadDigest: "digest", emittedAt: new Date(0).toISOString() },
+  outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
   attempt: 1, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: new Date(1_000).toISOString(), hardDeadlineAt: new Date(10_000).toISOString(),
 });
 const errorWithCode = (code: string): { code: string } => ({ code });

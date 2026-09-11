@@ -81,6 +81,7 @@ test("HttpWorkerTransport polls and sends every lease lifecycle payload unchange
   const calls: { url: string; init: RequestInit }[] = [];
   const delivery = {
     event: { id: "event-1" },
+    outputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
     attempt: 1,
     workerId: "worker-1",
     leaseId: "lease/1",
@@ -123,6 +124,8 @@ test("HttpWorkerTransport rejects malformed poll deliveries without leaking bear
     { event: { id: "event-1" }, workerId: 7, leaseId: "lease-1", leaseExpiresAt: "expiry", hardDeadlineAt: "deadline" },
     { event: { id: "event-1" }, workerId: "worker-1", leaseId: 7, leaseExpiresAt: "expiry", hardDeadlineAt: "deadline" },
     { event: { id: "event-1" }, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: 1, hardDeadlineAt: "deadline" },
+    { event: { id: "event-1" }, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: "expiry", hardDeadlineAt: "deadline", outputSchema: null },
+    { event: { id: "event-1" }, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: "expiry", hardDeadlineAt: "deadline", outputSchema: [] },
     { event: { id: "event-1" }, workerId: "worker-1", leaseId: "lease-1", leaseExpiresAt: "expiry", hardDeadlineAt: 1 },
   ];
   for (const value of malformed) {

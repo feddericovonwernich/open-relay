@@ -143,6 +143,7 @@ async function scopedToken(runtime: Runtime, scope: "producer" | "observer"): Pr
   return token;
 }
 function parseWorkerCapabilities(parsed: ParsedArgs, workerId: string, maxConcurrent = Number(option(parsed.options, "max-concurrent") ?? 1)): WorkerCapabilities {
+  const correlationId = option(parsed.options, "correlation-id");
   return {
     workerId,
     allowedDefinitions: (option(parsed.options, "definitions") ?? "*").split(",").filter(Boolean),
@@ -151,6 +152,7 @@ function parseWorkerCapabilities(parsed: ParsedArgs, workerId: string, maxConcur
     contextTokens: Number(option(parsed.options, "context-tokens") ?? 0),
     systemReserveTokens: Number(option(parsed.options, "system-reserve") ?? 0),
     maxConcurrent,
+    ...(correlationId === undefined ? {} : { correlationId }),
   };
 }
 
@@ -194,11 +196,12 @@ function parseReplyBody(parsed: ParsedArgs): JsonObject {
   return body as JsonObject;
 }
 function requireAgentCapabilityValues(parsed: ParsedArgs): void {
-  for (const name of ["definitions", "tools", "context-tokens", "system-reserve"]) {
+  for (const name of ["definitions", "tools", "context-tokens", "system-reserve", "correlation-id"]) {
     if (parsed.options[name] !== undefined && typeof parsed.options[name] !== "string") {
       throw new Error(`--${name} requires a value`);
     }
   }
+  if (parsed.options["correlation-id"] === "") throw new Error("correlation id must be a non-empty string");
 }
 
 
