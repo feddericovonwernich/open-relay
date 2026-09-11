@@ -66,7 +66,7 @@ test("rejects snapshots without the required nonempty identity strings", () => {
   for (const [object, field] of fields) {
     const candidate = structuredClone(snapshot) as PrSnapshot;
     (candidate[object] as unknown as Record<string, unknown>)[field] = "";
-    assert.equal(settledCheckRuns(withChecks([check()])), undefined, "control check remains valid");
+    assert.ok(settledCheckRuns(withChecks([check()])), "control check remains valid");
     assert.equal(settledCheckRuns({ ...candidate, checkRuns: [check()] }), undefined, `${object}.${field}`);
   }
 });
