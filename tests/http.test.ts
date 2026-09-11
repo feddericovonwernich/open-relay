@@ -28,8 +28,14 @@ async function register(value: Harness, workerId = "worker:test"): Promise<strin
 test("loopback routes accept, observe, and settle an agent delivery", async () => {
   const relay = await harness();
   try {
-    const eventId = await accept(relay, "http:1"); const worker = await register(relay); const polled = await request(relay.base, "POST", "/v1/agent/poll", worker, {}); assert.equal(polled.status, 200); const delivery = await polled.json() as { leaseId: string };
-    assert.equal((await request(relay.base, "GET", `/v1/events/${eventId}`, relay.observer)).status, 200); assert.equal((await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/complete`, worker, { result: { ok: true }, effects: [] })).status, 200);
+    const eventId = await accept(relay, "http:1"); const worker = await register(relay); const polled = await request(relay.base, "POST", "/v1/agent/poll", worker, {}); assert.equal(polled.status, 200); const delivery = await polled.json() as { leaseId: string; outputSchema: unknown };
+    assert.deepEqual(delivery.outputSchema, { "$schema": "http://json-schema.org/draft-07/schema#", type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false });
+    assert.equal((await request(relay.base, "GET", `/v1/events/${eventId}`, relay.observer)).status, 200);
+    const invalid = await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/complete`, worker, { result: { status: "processed" }, effects: [] });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(await invalid.json(), { error: { code: "invalid_output", message: "result does not match ui.variant.requested@1" } });
+    assert.equal(((await (await request(relay.base, "GET", `/v1/events/${eventId}`, relay.observer)).json()) as { state: string }).state, "leased");
+    assert.equal((await request(relay.base, "POST", `/v1/deliveries/${delivery.leaseId}/complete`, worker, { result: { ok: true }, effects: [] })).status, 200);
     assert.equal(((await (await request(relay.base, "GET", `/v1/events/${eventId}`, relay.observer)).json()) as { state: string }).state, "completed");
   } finally { await closeHarness(relay); }
 });
@@ -57,11 +63,30 @@ test("HTTP rejects JSON/schema errors, process exclusion, abort, CORS, body limi
   try {
     const malformed = await fetch(`${relay.base}/v1/events`, { method: "POST", headers: { Authorization: `Bearer ${relay.producer}`, "Content-Type": "application/json" }, body: "{" }); assert.equal(malformed.status, 400);
     assert.equal((await request(relay.base, "POST", "/v1/events", relay.producer, { type: "ui.variant.requested", version: 1, idempotencyKey: "bad", payload: { nope: true } })).status, 400);
+
     assert.equal((await request(relay.base, "POST", "/v1/events", relay.producer, { type: "ui.variant.requested", version: 1, idempotencyKey: "large", payload: { variant: "x".repeat(1000) } })).status, 413);
     assert.equal((await request(relay.base, "GET", "/v1/events/nope", relay.observer, undefined, { Origin: "https://denied.example" })).status, 403);
     const secret = "Bearer definitely-not-valid-secret"; const redacted = await fetch(`${relay.base}/v1/events/nope`, { headers: { Authorization: secret } }); assert.equal(redacted.status, 401); assert.equal((await redacted.text()).includes(secret), false);
     assert.throws(() => relay.server.listen(0, "0.0.0.0"), /loopback/);
     const worker = await register(relay); const controller = new AbortController(); const pending = fetch(`${relay.base}/v1/agent/poll`, { method: "POST", headers: { Authorization: `Bearer ${worker}`, "Content-Type": "application/json" }, body: "{}", signal: controller.signal }).catch((error: unknown) => error); controller.abort(); assert.equal((await pending as Error).name, "AbortError");
+  } finally { await closeHarness(relay); }
+});
+test("HTTP worker registration accepts only non-empty correlation IDs", async () => {
+  const relay = await harness();
+  try {
+    for (const correlationId of [null, 1, [], ""]) {
+      const response = await request(relay.base, "POST", "/v1/workers/register", relay.server.adminToken, {
+        workerId: `worker:invalid:${String(correlationId)}`, allowedDefinitions: ["*"], tools: [],
+        structuredOutput: true, contextTokens: 5000, systemReserveTokens: 0, maxConcurrent: 1, correlationId,
+      });
+      assert.equal(response.status, 400);
+    }
+    const accepted = await request(relay.base, "POST", "/v1/workers/register", relay.server.adminToken, {
+      workerId: "worker:valid", allowedDefinitions: ["*"], tools: [],
+      structuredOutput: true, contextTokens: 5000, systemReserveTokens: 0, maxConcurrent: 1,
+      correlationId: "github:octo/repo:pull-request:197",
+    });
+    assert.equal(accepted.status, 201);
   } finally { await closeHarness(relay); }
 });
 

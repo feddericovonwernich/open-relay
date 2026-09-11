@@ -90,6 +90,49 @@ test("accepted compatible work wakes an existing poll", async () => {
   assert.equal(delivery?.event.id, accepted.event.id);
   assert.equal(delivery?.workerId, registration.workerId);
 });
+test("correlation-filtered workers lease only matching events while broad workers remain unfiltered", async () => {
+  const store = openStore(":memory:", clock);
+  store.installRevisions([revision]);
+  store.accept({ id: "pr-100", producerId: "github", idempotencyKey: "pr-100", payload: { variant: "dark" }, revision, correlationId: "github:octo/repo:pull-request:100" });
+  const target = store.accept({ id: "pr-197", producerId: "github", idempotencyKey: "pr-197", payload: { variant: "light" }, revision, correlationId: "github:octo/repo:pull-request:197" });
+  const credentials = new CredentialStore({ now: clock });
+  const dispatcher = new Dispatcher(store, credentials, { now: clock });
+  const selected = dispatcher.registerWorker(worker({ workerId: "worker:197", correlationId: "github:octo/repo:pull-request:197" }));
+  const selectedDelivery = await dispatcher.poll(selected, AbortSignal.timeout(50));
+  assert.equal(selectedDelivery?.event.id, target.event.id);
+  assert.equal(Object.isFrozen(selectedDelivery?.outputSchema), true);
+  const broad = dispatcher.registerWorker(worker({ workerId: "worker:broad" }));
+  const broadDelivery = await dispatcher.poll(broad, AbortSignal.timeout(50));
+  assert.equal(broadDelivery?.event.id, "pr-100");
+});
+
+test("correlation-filtered workers do not treat an uncorrelated event as the null selector", async () => {
+  const store = openStore(":memory:", clock);
+  store.installRevisions([revision]);
+  store.accept({ id: "legacy", producerId: "browser", idempotencyKey: "legacy", payload: { variant: "dark" }, revision });
+  const credentials = new CredentialStore({ now: clock });
+  const dispatcher = new Dispatcher(store, credentials, { now: clock });
+  const selected = dispatcher.registerWorker(worker({ workerId: "worker:null", correlationId: "null" }));
+  assert.equal(await dispatcher.poll(selected, AbortSignal.timeout(5)), undefined);
+});
+
+test("correlation-filtered polling stays pending for wrong events and wakes for an exact match", async () => {
+  const store = openStore(":memory:");
+  store.installRevisions([revision]);
+  const credentials = new CredentialStore();
+  const dispatcher = new Dispatcher(store, credentials, { pollTimeoutMs: 250 });
+  const selected = dispatcher.registerWorker(worker({ workerId: "worker:197", correlationId: "github:octo/repo:pull-request:197" }));
+  let settled = false;
+  const pending = dispatcher.poll(selected, AbortSignal.timeout(250)).finally(() => { settled = true; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  store.accept({ id: "wrong", producerId: "github", idempotencyKey: "wrong", payload: { variant: "dark" }, revision, correlationId: "github:octo/repo:pull-request:100" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  const matching = store.accept({ id: "matching", producerId: "github", idempotencyKey: "matching", payload: { variant: "light" }, revision, correlationId: "github:octo/repo:pull-request:197" });
+  const delivery = await pending;
+  assert.equal(delivery?.event.id, matching.event.id);
+});
+
 
 test("empty compatible polling acquires once and retries only after committed work notification", async () => {
   const store = openStore(":memory:", clock);

@@ -9,6 +9,11 @@ export function deriveSnapshotRequirements(triggers) {
         reviews: triggers.some((trigger) => trigger.recognizer === "copilot-review"),
     };
 }
+export async function discoverPullRequest(client, repository, pullRequestNumber, signal) {
+    const pullRequest = await client.getPullRequest(repository, pullRequestNumber, signal);
+    assertRepository(pullRequest, repository);
+    return pullRequest;
+}
 export async function discoverPullRequests(client, repository, cutoff, signal) {
     const [open, closed] = await Promise.all([
         client.listOpenPullRequests(repository, signal),

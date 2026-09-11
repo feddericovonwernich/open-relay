@@ -29,6 +29,7 @@ const delivery: Delivery = {
     payloadDigest: "digest",
     emittedAt: "2026-09-09T00:00:00.000Z",
   },
+  outputSchema: { type: "object", properties: { reply: { type: "string" } }, required: ["reply"], additionalProperties: false },
   attempt: 1,
   workerId: capabilities.workerId,
   leaseId: "lease/1",

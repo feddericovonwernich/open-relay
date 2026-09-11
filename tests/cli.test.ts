@@ -73,10 +73,10 @@ test("CLI parser exposes emit version, JSON, and idempotency flags", () => {
 });
 
 test("CLI argument parser supports nested agent poll and reply commands", () => {
-  assert.deepEqual(parseArgs(["agent", "poll", "worker-1", "--definitions", "example.requested@1", "--structured-output", "--timeout", "5000"]), {
+  assert.deepEqual(parseArgs(["agent", "poll", "worker-1", "--definitions", "example.requested@1", "--structured-output", "--timeout", "5000", "--correlation-id", "github:octo/repo:pull-request:197"]), {
     command: "agent",
     args: ["poll", "worker-1"],
-    options: { definitions: "example.requested@1", "structured-output": true, timeout: "5000" },
+    options: { definitions: "example.requested@1", "structured-output": true, timeout: "5000", "correlation-id": "github:octo/repo:pull-request:197" },
   });
   assert.deepEqual(parseArgs(["agent", "reply", "lease-1", "complete", "--json", "{\"result\":{\"ok\":true},\"effects\":[]}"]), {
     command: "agent",
@@ -88,7 +88,7 @@ test("CLI argument parser supports nested agent poll and reply commands", () => 
 test("agent poll rejects valueless capability options and surplus positionals", async () => {
   const root = await mkdtemp(join(tmpdir(), "relay-cli-agent-"));
   try {
-    for (const optionName of ["definitions", "tools", "context-tokens", "system-reserve"]) {
+    for (const optionName of ["definitions", "tools", "context-tokens", "system-reserve", "correlation-id"]) {
       let stderr = "";
       const code = await runCli(["agent", "poll", "worker-1", `--${optionName}`], {
         cwd: root,
@@ -115,6 +115,17 @@ test("agent poll rejects valueless capability options and surplus positionals", 
     await rm(root, { recursive: true, force: true });
   }
 });
+test("agent poll rejects an empty correlation id", async () => {
+  let stderr = "";
+  const code = await runCli(["agent", "poll", "worker-1", "--correlation-id="], {
+    cwd: await mkdtemp(join(tmpdir(), "relay-cli-agent-")),
+    stdout: { write: () => undefined },
+    stderr: { write: (value) => { stderr += value; } },
+  });
+  assert.equal(code, 1);
+  assert.equal(stderr, "relay: correlation id must be a non-empty string\n");
+});
+
 
 test("agent poll validates timeout bounds and preserves relay error output", async () => {
   for (const timeout of ["0", "600001", "1.5"]) {
@@ -129,22 +140,33 @@ test("agent poll validates timeout bounds and preserves relay error output", asy
   }
 });
 
-test("agent poll prints exactly one JSON timeout line", async () => {
+test("agent poll prints exactly one JSON timeout line and sends correlation capability", async () => {
   const root = await mkdtemp(join(tmpdir(), "relay-cli-agent-"));
   await mkdir(join(root, ".relay"), { recursive: true });
   await writeFile(join(root, ".relay", "runtime.json"), JSON.stringify({ port: 4_321, token: "admin-secret" }));
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async (input): Promise<Response> => String(input).endsWith("/v1/workers/register")
-    ? jsonResponse({ workerId: "worker-1", token: "worker-secret" }, 201)
-    : jsonResponse(null);
+  let registrationBody: unknown;
+  globalThis.fetch = async (input, init): Promise<Response> => {
+    if (String(input).endsWith("/v1/workers/register")) {
+      registrationBody = JSON.parse(String(init?.body));
+      return jsonResponse({ workerId: "worker-1", token: "worker-secret" }, 201);
+    }
+    return jsonResponse(null);
+  };
   let stdout = "";
   let stderr = "";
   try {
-    const code = await runCli(["agent", "poll", "worker-1", "--timeout", "1"], {
+    const code = await runCli(["agent", "poll", "worker-1", "--timeout", "1", "--correlation-id", "github:octo/repo:pull-request:197"], {
       cwd: root,
       stdout: { write: (value) => { stdout += value; } },
       stderr: { write: (value) => { stderr += value; } },
     });
+    assert.deepEqual(registrationBody, {
+      workerId: "worker-1", allowedDefinitions: ["*"], tools: [], structuredOutput: false,
+      contextTokens: 0, systemReserveTokens: 0, maxConcurrent: 1,
+      correlationId: "github:octo/repo:pull-request:197",
+    });
+    assert.doesNotMatch(JSON.stringify(registrationBody), /admin-secret|worker-secret/);
     assert.equal(code, 0);
     assert.equal(stdout, "{\"type\":\"timeout\"}\n");
     assert.equal(stderr, "");
@@ -267,11 +289,66 @@ test("stream removes reconnect abort listeners after cancellation", async () => 
 });
 
 test("parses positional GitHub connector flags", () => {
-  assert.deepEqual(parseArgs(["connect", "github", "--config", "config.json", "--once", "--discover", "--project-root", "/tmp/project"]), {
+  assert.deepEqual(parseArgs(["connect", "github", "--config", "config.json", "--pull-request", "197", "--once", "--discover", "--project-root", "/tmp/project"]), {
     command: "connect",
     args: ["github"],
-    options: { config: "config.json", once: true, discover: true, "project-root": "/tmp/project" },
+    options: { config: "config.json", "pull-request": "197", once: true, discover: true, "project-root": "/tmp/project" },
   });
+});
+
+test("targeted GitHub connector rejects invalid selectors with exact errors", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-github-"));
+  await mkdir(join(root, ".relay", "connectors"), { recursive: true });
+  await writeFile(join(root, ".relay", "connectors", "github.json"), JSON.stringify({
+    connector: "github",
+    repositories: ["octo/repo"],
+    triggers: [{ id: "sonar-v1", recognizer: "sonarqube", match: { checkNames: ["SonarCloud Code Analysis"], appIds: [42], appSlugs: [] }, emit: { type: "x", version: 1 } }],
+  }));
+  try {
+    for (const [argv, message] of [
+      [["connect", "github", "--pull-request"], "--pull-request requires a value"],
+      [["connect", "github", "--pull-request=0"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=-1"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=1.5"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=1e3"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=abc"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request=9007199254740992"], "--pull-request must be a positive integer"],
+      [["connect", "github", "--pull-request", "197", "198"], "--pull-request accepts exactly one value"],
+    ] as const) {
+      let stderr = "";
+      const code = await runCli([...argv, "--project-root", root], {
+        cwd: root,
+        stdout: { write: () => undefined },
+        stderr: { write: (value) => { stderr += value; } },
+      });
+      assert.equal(code, 1);
+      assert.equal(stderr, `relay: ${message}\n`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("targeted GitHub connector checks repository count before token or runtime access", async () => {
+  const root = await mkdtemp(join(tmpdir(), "relay-cli-github-"));
+  await mkdir(join(root, ".relay", "connectors"), { recursive: true });
+  await writeFile(join(root, ".relay", "connectors", "github.json"), JSON.stringify({
+    connector: "github",
+    repositories: ["octo/repo", "octo/other"],
+    triggers: [{ id: "sonar-v1", recognizer: "sonarqube", match: { checkNames: ["SonarCloud Code Analysis"], appIds: [42], appSlugs: [] }, emit: { type: "x", version: 1 } }],
+  }));
+  let stderr = "";
+  try {
+    const code = await runCli(["connect", "github", "--pull-request", "197", "--project-root", root], {
+      cwd: root,
+      stdout: { write: () => undefined },
+      stderr: { write: (value) => { stderr += value; } },
+    });
+    assert.equal(code, 1);
+    assert.equal(stderr, "relay: --pull-request requires exactly one configured repository\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("safe CLI output keeps app identities while removing secrets", () => {

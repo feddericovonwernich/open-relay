@@ -33,6 +33,7 @@ function revision(plugin: string, overrides: Partial<DefinitionRevision["definit
 function delivery(revisionValue: DefinitionRevision): Delivery {
   return {
     event: { id: "event-1", producerId: "browser:test", idempotencyKey: "key-1", type: revisionValue.definition.type, version: 1, definitionRevision: revisionValue.digest, payload: { input: true }, payloadDigest: "digest", emittedAt: new Date().toISOString() },
+    outputSchema: revisionValue.outputSchema,
     attempt: 1,
     workerId: "relay:process",
     leaseId: "lease-1",

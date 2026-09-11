@@ -36,6 +36,17 @@ export function deriveSnapshotRequirements(triggers: readonly TriggerConfig[]): 
     reviews: triggers.some((trigger) => trigger.recognizer === "copilot-review"),
   };
 }
+export async function discoverPullRequest(
+  client: Pick<GitHubClient, "getPullRequest">,
+  repository: string,
+  pullRequestNumber: number,
+  signal?: AbortSignal,
+): Promise<GitHubPullRequest> {
+  const pullRequest = await client.getPullRequest(repository, pullRequestNumber, signal);
+  assertRepository(pullRequest, repository);
+  return pullRequest;
+}
+
 
 export async function discoverPullRequests(
   client: Client,

@@ -21,6 +21,7 @@ const TOP_LEVEL_KEYS = {
     lookbackHours: true,
     repositories: true,
     triggers: true,
+    aggregate: true,
 };
 const TRIGGER_KEYS = {
     id: true,
@@ -211,6 +212,14 @@ function trigger(value, discover) {
     }
     return { id, recognizer, match, emit: emission };
 }
+function aggregate(value) {
+    const record = object(value, "aggregate");
+    checkUnknownKeys(record, { id: true, emit: true });
+    const id = string(record.id, "aggregate.id");
+    if (!TRIGGER_ID.test(id))
+        invalid("aggregate_id");
+    return { id, emit: emit(record.emit) };
+}
 function freeze(value) {
     if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
         for (const child of Object.values(value))
@@ -246,6 +255,9 @@ export function validateGitHubConnectorConfig(value, options = {}) {
         ids.add(normalized.id);
         return normalized;
     });
+    const aggregateConfig = record.aggregate === undefined ? undefined : aggregate(record.aggregate);
+    if (aggregateConfig !== undefined && ids.has(aggregateConfig.id))
+        invalid("aggregate_id_duplicate");
     const pollIntervalMs = record.pollIntervalMs === undefined ? 15_000 : record.pollIntervalMs;
     if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 5_000 || pollIntervalMs > 3_600_000)
         invalid("poll_interval");
@@ -261,6 +273,7 @@ export function validateGitHubConnectorConfig(value, options = {}) {
         lookbackHours: lookbackHours,
         repositories,
         triggers,
+        ...(aggregateConfig === undefined ? {} : { aggregate: aggregateConfig }),
     };
     if (!ENV_NAME.test(normalized.tokenEnv))
         invalid("token_env");

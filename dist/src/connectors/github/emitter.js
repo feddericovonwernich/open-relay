@@ -1,4 +1,5 @@
-import { normalizeCompletion } from "./normalize.js";
+import { createHash } from "node:crypto";
+import { normalizeCompletion, normalizeSettled } from "./normalize.js";
 export class GitHubRelayEmitterError extends Error {
     code;
     status;
@@ -92,6 +93,17 @@ function abortable(promise, signal) {
 export function completionKey(candidate) {
     return `github:${candidate.repositoryId}:${candidate.triggerId}:${candidate.artifactKind}:${candidate.artifactId}`;
 }
+export function pullRequestCorrelationId(repositoryFullName, pullRequestNumber) {
+    return `github:${repositoryFullName.toLowerCase()}:pull-request:${pullRequestNumber}`;
+}
+export function settledKey(aggregate, snapshot, candidates) {
+    const members = candidates
+        .map((candidate) => `${candidate.triggerId}\0${candidate.artifactKind}\0${candidate.artifactId}`)
+        .sort()
+        .join("\0");
+    const hash = createHash("sha256").update(members).digest("hex");
+    return `github:${snapshot.repository.id}:aggregate:${aggregate.id}:pull-request:${snapshot.pullRequest.number}:head:${snapshot.pullRequest.headSha}:members:${hash}`;
+}
 export class GitHubRelayEmitter {
     baseUrl;
     adminToken;
@@ -179,6 +191,7 @@ export class GitHubRelayEmitter {
                 version: trigger.emit.version,
                 payload,
                 idempotencyKey,
+                correlationId: pullRequestCorrelationId(snapshot.repository.fullName, snapshot.pullRequest.number),
             }),
         });
         if (response.status === 201)
@@ -193,6 +206,38 @@ export class GitHubRelayEmitter {
         }
         if (error.code === "definition_not_found" || response.status === 404) {
             throw new GitHubRelayEmitterError("trigger_invalid", `trigger ${trigger.id} references an unknown definition for repository ${snapshot.repository.id}`, response.status);
+        }
+        const message = safeText(error.message ?? body ?? `relay request failed (${response.status})`, secrets);
+        throw new GitHubRelayEmitterError(error.code ?? "relay_failed", message, response.status);
+    }
+    async emitAggregate(aggregate, snapshot, candidates, signal) {
+        const producerToken = await this.producerToken(snapshot.repository.id, signal);
+        const payload = normalizeSettled(snapshot, candidates);
+        const idempotencyKey = settledKey(aggregate, snapshot, candidates);
+        const response = await this.request("/v1/events", producerToken, {
+            method: "POST",
+            signal,
+            headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+            body: JSON.stringify({
+                type: aggregate.emit.type,
+                version: aggregate.emit.version,
+                payload,
+                idempotencyKey,
+                correlationId: pullRequestCorrelationId(snapshot.repository.fullName, snapshot.pullRequest.number),
+            }),
+        });
+        if (response.status === 201)
+            return "emitted";
+        if (response.status === 200)
+            return "replayed";
+        const body = await responseBody(response);
+        const error = relayError(body);
+        const secrets = [this.adminToken, producerToken];
+        if (error.code === "idempotency_conflict" || response.status === 409) {
+            throw new GitHubRelayEmitterError("aggregate_drift", `aggregate ${aggregate.id} drifted for repository ${snapshot.repository.id}`, response.status);
+        }
+        if (error.code === "definition_not_found" || response.status === 404) {
+            throw new GitHubRelayEmitterError("aggregate_invalid", `aggregate ${aggregate.id} references an unknown definition for repository ${snapshot.repository.id}`, response.status);
         }
         const message = safeText(error.message ?? body ?? `relay request failed (${response.status})`, secrets);
         throw new GitHubRelayEmitterError(error.code ?? "relay_failed", message, response.status);

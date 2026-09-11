@@ -385,7 +385,7 @@ class SqliteStore implements Store {
       const rows = this.queuedEvents.all(now) as EventRow[];
       for (const row of rows) {
         const revision = this.getRevision(String(row.definition_revision));
-        if (workers.some((worker) => this.agentMatches(revision, worker))) continue;
+        if (workers.some((worker) => this.agentMatches(row, revision, worker))) continue;
         const eventId = String(row.id);
         this.db.prepare("UPDATE events SET state = 'blocked', updated_at = ? WHERE id = ? AND state <> 'blocked'").run(now, eventId);
         if (String(row.state) !== "blocked") this.insertUpdateRecord(eventId, { kind: "blocked", attempt: Number(row.attempt), data: {}, createdAt: now });
@@ -615,7 +615,7 @@ class SqliteStore implements Store {
         const revision = this.getRevision(String(row.definition_revision));
         const handler = revision.definition.handler;
         if (handler.kind !== kind) continue;
-        if (kind === "agent" && !this.agentMatches(revision, worker as WorkerCapabilities)) continue;
+        if (kind === "agent" && !this.agentMatches(row, revision, worker as WorkerCapabilities)) continue;
         const leaseId = randomUUID();
         const attempt = Number(row.attempt) + 1;
         const leaseExpiresAt = now + revision.definition.timeoutMs;
@@ -625,7 +625,7 @@ class SqliteStore implements Store {
           attempt, workerId, leaseId, leaseExpiresAt, hardDeadlineAt, now, String(row.id),
         );
         this.insertUpdateRecord(String(row.id), { kind: "leased", attempt, workerId, leaseId, data: {}, createdAt: now });
-        return this.deliveryFromEvent(this.findEvent.get(String(row.id)) as EventRow);
+        return this.deliveryFromEvent(this.findEvent.get(String(row.id)) as EventRow, revision);
       }
       return undefined;
     });
@@ -633,7 +633,7 @@ class SqliteStore implements Store {
     return delivery;
   }
 
-  private agentMatches(revision: DefinitionRevision, worker: WorkerCapabilities): boolean {
+  private agentMatches(row: EventRow, revision: DefinitionRevision, worker: WorkerCapabilities): boolean {
     const definition = revision.definition;
     if (definition.handler.kind !== "agent") return false;
     const name = `${definition.type}@${definition.version}`;
@@ -641,7 +641,8 @@ class SqliteStore implements Store {
     if (!definition.requires.tools.every((tool) => worker.tools.includes(tool))) return false;
     if (definition.requires.structuredOutput && !worker.structuredOutput) return false;
     const requiredContext = Math.max(definition.requires.minContextTokens, worker.systemReserveTokens + definition.requires.maxInputTokens + definition.requires.maxOutputTokens);
-    return worker.contextTokens >= requiredContext;
+    return worker.contextTokens >= requiredContext
+      && (worker.correlationId === undefined || (row.correlation_id !== null && String(row.correlation_id) === worker.correlationId));
   }
 
   private transition(authority: DeliveryAuthority, states: readonly string[], nextState: string | undefined, update: { kind: string; data: unknown }): void {
@@ -711,8 +712,7 @@ class SqliteStore implements Store {
   private insertUpdateRecord(eventId: string, update: { kind: string; attempt?: number; workerId?: string; leaseId?: string; data: unknown; createdAt?: number }): void {
     this.insertUpdate.run(eventId, update.kind, update.attempt ?? null, update.workerId ?? null, update.leaseId ?? null, json(update.data, "update"), update.createdAt ?? this.clock.now());
   }
-
-  private deliveryFromEvent(row: EventRow): Delivery {
+  private deliveryFromEvent(row: EventRow, revision: DefinitionRevision): Delivery {
     return {
       event: {
         id: String(row.id), producerId: String(row.producer_id), idempotencyKey: String(row.idempotency_key),
@@ -721,6 +721,7 @@ class SqliteStore implements Store {
         emittedAt: new Date(Number(row.created_at)).toISOString(),
         ...(row.correlation_id == null ? {} : { correlationId: String(row.correlation_id) }),
       },
+      outputSchema: revision.outputSchema,
       attempt: Number(row.attempt), workerId: String(row.worker_id), leaseId: String(row.lease_id),
       leaseExpiresAt: new Date(Number(row.lease_expires_at)).toISOString(), hardDeadlineAt: new Date(Number(row.hard_deadline_at)).toISOString(),
     };

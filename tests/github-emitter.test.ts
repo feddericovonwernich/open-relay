@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { completionKey, GitHubRelayEmitter } from "../src/connectors/github/emitter.ts";
-import { normalizeCompletion } from "../src/connectors/github/normalize.ts";
+import { completionKey, GitHubRelayEmitter, pullRequestCorrelationId, settledKey } from "../src/connectors/github/emitter.ts";
+import { normalizeCompletion, normalizeSettled } from "../src/connectors/github/normalize.ts";
 import type { CompletionCandidate, PrSnapshot, TriggerConfig } from "../src/connectors/github/types.ts";
 
 const trigger: TriggerConfig = {
@@ -34,6 +34,20 @@ const candidate: CompletionCandidate = {
     detailsUrl: null,
   },
 };
+const aggregate = { id: "settled-v1", emit: { type: "pr.automation.settled", version: 1 } };
+
+function candidateFor(triggerId: string, kind: CompletionCandidate["artifactKind"], id: string): CompletionCandidate {
+  return {
+    ...candidate,
+    triggerId,
+    artifactKind: kind,
+    artifactId: id,
+    artifact: {
+      ...candidate.artifact,
+      completion: kind === "check_run" ? "completed" : "submitted",
+    },
+  };
+}
 
 function response(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -72,6 +86,34 @@ test("normalizes a fresh immutable payload and excludes mutable/private fields",
   assert.equal(Object.isFrozen(payload), true);
   assert.equal(Object.isFrozen(payload.artifact), true);
 });
+test("normalizes all settled candidates in deterministic immutable order", () => {
+  const payload = normalizeSettled(snapshot, [
+    candidateFor("z-trigger", "check_run", "2"),
+    candidateFor("a-trigger", "pull_request_review", "9"),
+    candidateFor("a-trigger", "check_run", "1"),
+  ]);
+  assert.deepEqual(payload, {
+    schemaVersion: 1,
+    provider: "github",
+    repository: { id: 7, fullName: "example/repo" },
+    pullRequest: { number: 12, url: snapshot.pullRequest.url, headSha: "head-1", baseRef: "main" },
+    artifacts: [
+      { triggerId: "a-trigger", provider: "copilot-review", kind: "check_run", id: "1", name: "GitHub Copilot review", completion: "completed", conclusion: "submitted", completedAt: candidate.artifact.completedAt, detailsUrl: null },
+      { triggerId: "a-trigger", provider: "copilot-review", kind: "pull_request_review", id: "9", name: "GitHub Copilot review", completion: "submitted", conclusion: "submitted", completedAt: candidate.artifact.completedAt, detailsUrl: null },
+      { triggerId: "z-trigger", provider: "copilot-review", kind: "check_run", id: "2", name: "GitHub Copilot review", completion: "completed", conclusion: "submitted", completedAt: candidate.artifact.completedAt, detailsUrl: null },
+    ],
+  });
+  assert.equal(Object.isFrozen(payload), true);
+  assert.equal(Object.isFrozen(payload.artifacts), true);
+  assert.equal(Object.isFrozen(payload.artifacts[0]), true);
+});
+
+test("settled key is membership-based and mapping-independent", () => {
+  const candidates = [candidateFor("b", "check_run", "2"), candidateFor("a", "check_run", "1")];
+  const reversed = [...candidates].reverse();
+  assert.equal(settledKey(aggregate, snapshot, candidates), settledKey({ ...aggregate, emit: { type: "other", version: 9 } }, snapshot, reversed));
+  assert.match(settledKey(aggregate, snapshot, candidates), /^github:7:aggregate:settled-v1:pull-request:12:head:head-1:members:[a-f0-9]{64}$/);
+});
 
 test("issues one repository-scoped producer and distinguishes created from replayed", async () => {
   const requests: Request[] = [];
@@ -96,10 +138,58 @@ test("issues one repository-scoped producer and distinguishes created from repla
     version: 1,
     payload: normalizeCompletion(snapshot, candidate),
     idempotencyKey: completionKey(candidate),
+    correlationId: "github:example/repo:pull-request:12",
   });
   assert.equal(event.url.includes("producer-secret"), false);
   assert.equal(JSON.stringify(body).includes("producer-secret"), false);
 });
+test("individual events carry a stable pull-request correlation id", async () => {
+  const requests: Request[] = [];
+  const fetcher = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+    requests.push(new Request(input, init));
+    return requestUrl(input).pathname === "/v1/credentials"
+      ? response(201, { token: "producer-secret" })
+      : response(201, { event: { id: "event-1" } });
+  };
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+  assert.equal(pullRequestCorrelationId("Example/Repo", 12), "github:example/repo:pull-request:12");
+  await emitter.emit(trigger, snapshot, candidate);
+  const event = requests.find((request) => new URL(request.url).pathname === "/v1/events");
+  assert.ok(event);
+  const body = JSON.parse(await event.text()) as Record<string, unknown>;
+  assert.equal(body.idempotencyKey, completionKey(candidate));
+  assert.deepEqual(body.payload, normalizeCompletion(snapshot, candidate));
+  assert.equal(body.correlationId, "github:example/repo:pull-request:12");
+  assert.equal(event.headers.get("Idempotency-Key"), completionKey(candidate));
+  assert.equal(JSON.stringify(body).includes("admin-secret"), false);
+  assert.equal(JSON.stringify(body).includes("producer-secret"), false);
+});
+test("emits aggregate payload with stable key and pull-request correlation", async () => {
+  const requests: Request[] = [];
+  let eventCalls = 0;
+  const fetcher = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+    requests.push(new Request(input, init));
+    return requestUrl(input).pathname === "/v1/credentials"
+      ? response(201, { token: "producer-secret" })
+      : response(++eventCalls === 1 ? 201 : 200, { event: { id: "event-aggregate" } });
+  };
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+  const members = [candidateFor("b", "check_run", "2"), candidateFor("a", "check_run", "1")];
+  assert.equal(await emitter.emitAggregate(aggregate, snapshot, members), "emitted");
+  assert.equal(await emitter.emitAggregate(aggregate, snapshot, members), "replayed");
+  const event = requests.filter((request) => new URL(request.url).pathname === "/v1/events")[0];
+  assert.ok(event);
+  const body = JSON.parse(await event.text()) as Record<string, unknown>;
+  assert.deepEqual(body, {
+    type: "pr.automation.settled",
+    version: 1,
+    payload: normalizeSettled(snapshot, members),
+    idempotencyKey: settledKey(aggregate, snapshot, members),
+    correlationId: "github:example/repo:pull-request:12",
+  });
+  assert.equal(event.headers.get("Idempotency-Key"), settledKey(aggregate, snapshot, members));
+});
+
 
 test("isolates trigger drift and unknown definitions without leaking secrets", async () => {
   for (const [status, code, expected] of [[409, "idempotency_conflict", "trigger_drift"], [404, "definition_not_found", "trigger_invalid"]] as const) {

@@ -65,3 +65,14 @@ npm run typecheck
 npm run build
 npm run test:onboarding
 ```
+
+## Targeted GitHub PR watch loop
+
+Keep these two harness-managed processes running:
+
+```bash
+relay connect github --config .relay/connectors/github.json --pull-request 197
+relay agent poll pr-197-agent --definitions pr.automation.settled@1 --structured-output --context-tokens 5000 --correlation-id github:owner/repository:pull-request:197
+```
+
+The connector stays running and silent while any configured trigger lacks a terminal current-head artifact; the poll stays parked and the settled event wakes it. To receive immediate artifacts too, use `--definitions pr.automation.completed@1,pr.automation.settled@1` and settle/re-poll after each delivery. Construct `body.result` against the returned `delivery.outputSchema` before `complete`; HTTP 400 leaves the lease active for a corrected reply. Targeted `lookbackHours` is irrelevant, unrelated queued events cannot match the correlation filter, and neither command consumes model turns while blocked.

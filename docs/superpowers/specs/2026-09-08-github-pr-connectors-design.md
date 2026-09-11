@@ -41,7 +41,7 @@ The connector runs beside the loopback-only relay and polls GitHub REST. It does
 - Tunnel management.
 - Generic JSONPath/rules-engine recognition.
 - Provider-specific output event schemas.
-- Waiting for all providers and emitting an aggregate “all complete” event.
+- No aggregate when the optional settled mapping is absent.
 - Triggering SonarQube, Copilot, or Bugbot runs.
 - Copilot or Bugbot comment-body ingestion.
 - Source-code ingestion.
@@ -586,8 +586,27 @@ Tokens, headers, comment bodies, source text, and full provider payloads are nev
 - The feature is named the GitHub connector; provider logic is named recognizers; mappings are triggers.
 - Initial deployment is a separate local polling process.
 - One normalized completion event shape serves all providers.
-- Completion emits once per provider artifact, not after all providers aggregate.
+- Completion emits once per provider artifact; a configured aggregate also emits after every trigger settles.
 - Open Relay’s deterministic idempotency is the durable seen-set.
 - Sonar GitHub checks require operator-pinned app identity.
 - No provider comment or body text enters the normalized payload.
 - Current-head verification happens immediately before emission.
+
+## Targeted PR and settled aggregate semantics
+
+`relay connect github --config <path> --pull-request <positive-integer>` requires exactly one configured repository and uses `GET /repos/{owner}/{repo}/pulls/{number}`; it never falls back to repository-wide open/closed lists. The selected PR may be old, closed, or merged, and `lookbackHours` does not apply. In continuous mode the same targeted snapshot cycle repeats until interrupted.
+
+Every emitted event carries the stable correlation ID `github:<lowercase-owner/repository>:pull-request:<number>`. A worker may register an exact `correlationId` capability; only events with that value match, so unrelated queued PR events remain unavailable to that worker.
+
+An optional configuration block covers exactly every trigger:
+
+```json
+"aggregate": {
+  "id": "pr-automation-settled-v1",
+  "emit": { "type": "pr.automation.settled", "version": 1 }
+}
+```
+
+When each configured trigger has a terminal current-head candidate, the connector verifies the head again and emits one `PrAutomationSettled` payload containing all recognized artifacts. Members are sorted by `triggerId`, kind, and ID. Its immutable idempotency key is `github:<repositoryId>:aggregate:<aggregateId>:pull-request:<number>:head:<headSha>:members:<sha256>`, where the hash covers sorted `triggerId\0artifactKind\0artifactId` tuples and excludes emit type/version. A stale final head suppresses the aggregate; changing the same-head member set creates a new key. Existing configurations without `aggregate` remain individual-only.
+
+Continuous operation stays silent while any configured trigger lacks a terminal current-head artifact; the connector does not emit a settled event until all triggers are represented. A parked correlation-filtered worker wakes only when the settled event is accepted.

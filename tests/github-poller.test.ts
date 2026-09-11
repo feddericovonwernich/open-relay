@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  discoverPullRequest,
   discoverPullRequests,
   deriveSnapshotRequirements,
   loadPrSnapshot,
@@ -58,6 +59,24 @@ test("discovers all open and recent closed PRs, deduplicating by latest update",
   const result = await discoverPullRequests(api, repository, cutoff);
   assert.deepEqual(result.map((item) => [item.number, item.headSha]), [[2, "sha-2"], [3, "sha-3"], [7, "new-sha-7"]]);
   assert.deepEqual(calls, [`open:${repository}`, `closed:${repository}:${cutoff}`]);
+});
+test("directly discovers one old or closed pull request without list calls", async () => {
+  const calls: string[] = [];
+  const target = pr(197, "2020-01-01T00:00:00Z", "old-head", "closed");
+  const api = client({
+    listOpenPullRequests: async () => { calls.push("open"); throw new Error("list endpoint must not be called"); },
+    listRecentClosedPullRequests: async () => { calls.push("closed"); throw new Error("list endpoint must not be called"); },
+    getPullRequest: async (name, number) => { calls.push(`get:${name}:${number}`); return target; },
+  });
+  assert.deepEqual(await discoverPullRequest(api, repository, 197), target);
+  assert.deepEqual(calls, [`get:${repository}:197`]);
+});
+
+test("direct discovery retains repository identity validation", async () => {
+  await assert.rejects(
+    discoverPullRequest(client({ getPullRequest: async () => ({ ...pr(197), repositoryFullName: "other/repo" }) }), repository, 197),
+    /belongs to other\/repo/,
+  );
 });
 
 test("passes the cutoff to closed discovery so old closed pages can stop", async () => {

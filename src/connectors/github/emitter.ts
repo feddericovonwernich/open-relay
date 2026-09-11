@@ -1,5 +1,6 @@
-import { normalizeCompletion } from "./normalize.ts";
-import type { CompletionCandidate, PrSnapshot, TriggerConfig } from "./types.ts";
+import { createHash } from "node:crypto";
+import { normalizeCompletion, normalizeSettled } from "./normalize.ts";
+import type { CompletionCandidate, GitHubConnectorConfig, PrSnapshot, TriggerConfig } from "./types.ts";
 
 export interface GitHubRelayEmitterOptions {
   baseUrl: string;
@@ -97,6 +98,24 @@ export function completionKey(candidate: CompletionCandidate): string {
   return `github:${candidate.repositoryId}:${candidate.triggerId}:${candidate.artifactKind}:${candidate.artifactId}`;
 }
 
+export function pullRequestCorrelationId(repositoryFullName: string, pullRequestNumber: number): string {
+  return `github:${repositoryFullName.toLowerCase()}:pull-request:${pullRequestNumber}`;
+}
+type AggregateConfig = NonNullable<GitHubConnectorConfig["aggregate"]>;
+
+export function settledKey(
+  aggregate: AggregateConfig,
+  snapshot: PrSnapshot,
+  candidates: readonly CompletionCandidate[],
+): string {
+  const members = candidates
+    .map((candidate) => `${candidate.triggerId}\0${candidate.artifactKind}\0${candidate.artifactId}`)
+    .sort()
+    .join("\0");
+  const hash = createHash("sha256").update(members).digest("hex");
+  return `github:${snapshot.repository.id}:aggregate:${aggregate.id}:pull-request:${snapshot.pullRequest.number}:head:${snapshot.pullRequest.headSha}:members:${hash}`;
+}
+
 export class GitHubRelayEmitter {
   private readonly baseUrl: string;
   private readonly adminToken: string;
@@ -184,6 +203,7 @@ export class GitHubRelayEmitter {
         version: trigger.emit.version,
         payload,
         idempotencyKey,
+        correlationId: pullRequestCorrelationId(snapshot.repository.fullName, snapshot.pullRequest.number),
       }),
     });
     if (response.status === 201) return "emitted";
@@ -203,6 +223,50 @@ export class GitHubRelayEmitter {
       throw new GitHubRelayEmitterError(
         "trigger_invalid",
         `trigger ${trigger.id} references an unknown definition for repository ${snapshot.repository.id}`,
+        response.status,
+      );
+    }
+    const message = safeText(error.message ?? body ?? `relay request failed (${response.status})`, secrets);
+    throw new GitHubRelayEmitterError(error.code ?? "relay_failed", message, response.status);
+  }
+  async emitAggregate(
+    aggregate: AggregateConfig,
+    snapshot: PrSnapshot,
+    candidates: readonly CompletionCandidate[],
+    signal?: AbortSignal,
+  ): Promise<"emitted" | "replayed"> {
+    const producerToken = await this.producerToken(snapshot.repository.id, signal);
+    const payload = normalizeSettled(snapshot, candidates);
+    const idempotencyKey = settledKey(aggregate, snapshot, candidates);
+    const response = await this.request("/v1/events", producerToken, {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({
+        type: aggregate.emit.type,
+        version: aggregate.emit.version,
+        payload,
+        idempotencyKey,
+        correlationId: pullRequestCorrelationId(snapshot.repository.fullName, snapshot.pullRequest.number),
+      }),
+    });
+    if (response.status === 201) return "emitted";
+    if (response.status === 200) return "replayed";
+
+    const body = await responseBody(response);
+    const error = relayError(body);
+    const secrets = [this.adminToken, producerToken];
+    if (error.code === "idempotency_conflict" || response.status === 409) {
+      throw new GitHubRelayEmitterError(
+        "aggregate_drift",
+        `aggregate ${aggregate.id} drifted for repository ${snapshot.repository.id}`,
+        response.status,
+      );
+    }
+    if (error.code === "definition_not_found" || response.status === 404) {
+      throw new GitHubRelayEmitterError(
+        "aggregate_invalid",
+        `aggregate ${aggregate.id} references an unknown definition for repository ${snapshot.repository.id}`,
         response.status,
       );
     }

@@ -61,5 +61,12 @@
         "version": 1
       }
     }
-  ]
+  ],
+  "aggregate": {
+    "id": "pr-automation-settled-v1",
+    "emit": {
+      "type": "pr.automation.settled",
+      "version": 1
+    }
+  }
 }

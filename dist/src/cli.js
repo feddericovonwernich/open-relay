@@ -145,6 +145,7 @@ async function scopedToken(runtime, scope) {
     return token;
 }
 function parseWorkerCapabilities(parsed, workerId, maxConcurrent = Number(option(parsed.options, "max-concurrent") ?? 1)) {
+    const correlationId = option(parsed.options, "correlation-id");
     return {
         workerId,
         allowedDefinitions: (option(parsed.options, "definitions") ?? "*").split(",").filter(Boolean),
@@ -153,7 +154,21 @@ function parseWorkerCapabilities(parsed, workerId, maxConcurrent = Number(option
         contextTokens: Number(option(parsed.options, "context-tokens") ?? 0),
         systemReserveTokens: Number(option(parsed.options, "system-reserve") ?? 0),
         maxConcurrent,
+        ...(correlationId === undefined ? {} : { correlationId }),
     };
+}
+function parsePullRequestSelection(parsed) {
+    const value = parsed.options["pull-request"];
+    if (value === undefined)
+        return undefined;
+    if (value === true)
+        throw new Error("--pull-request requires a value");
+    if (typeof value !== "string" || !/^[1-9]\d*$/.test(value))
+        throw new Error("--pull-request must be a positive integer");
+    const number = Number(value);
+    if (!Number.isSafeInteger(number))
+        throw new Error("--pull-request must be a positive integer");
+    return number;
 }
 function parseAgentTimeout(parsed) {
     const value = parsed.options.timeout;
@@ -194,11 +209,13 @@ function parseReplyBody(parsed) {
     return body;
 }
 function requireAgentCapabilityValues(parsed) {
-    for (const name of ["definitions", "tools", "context-tokens", "system-reserve"]) {
+    for (const name of ["definitions", "tools", "context-tokens", "system-reserve", "correlation-id"]) {
         if (parsed.options[name] !== undefined && typeof parsed.options[name] !== "string") {
             throw new Error(`--${name} requires a value`);
         }
     }
+    if (parsed.options["correlation-id"] === "")
+        throw new Error("correlation id must be a non-empty string");
 }
 async function agentCommand(parsed, io) {
     const root = resolve(io.cwd, option(parsed.options, "project-root", "project") ?? ".");
@@ -301,7 +318,7 @@ async function execute(parsed, io) {
             "  relay start | relay stop",
             "  relay emit <type> --version <n> --json <payload>",
             "  relay get <event-id> | relay cancel <event-id>",
-            "  relay connect github [--once] [--discover]",
+            "  relay connect github [--pull-request <positive-integer>] [--once] [--discover]",
             "  relay recovery <list|resolve> | relay workers | relay reload",
             "  relay agent poll <worker-id> [options]",
             "  relay agent reply <lease-id> <action> [--json <object>]",
@@ -325,10 +342,16 @@ async function execute(parsed, io) {
         const connector = requiredArg(parsed.args, 0, "connector");
         if (connector !== "github")
             throw new Error(`unknown connector: ${connector}`);
+        const pullRequestNumber = parsePullRequestSelection(parsed);
+        if (pullRequestNumber !== undefined && parsed.args.length !== 1)
+            throw new Error("--pull-request accepts exactly one value");
         const discover = parsed.options.discover === true;
         const once = parsed.options.once === true || discover;
         const configPath = resolve(root, option(parsed.options, "config") ?? ".relay/connectors/github.json");
         const config = await loadGitHubConnectorConfig(configPath, { discover, allowLoopbackHttp: process.env.NODE_ENV === "test" });
+        if (pullRequestNumber !== undefined && config.repositories.length !== 1) {
+            throw new Error("--pull-request requires exactly one configured repository");
+        }
         const githubToken = process.env[config.tokenEnv];
         if (!githubToken)
             throw new Error(`GitHub token environment variable is missing: ${config.tokenEnv}`);
@@ -346,6 +369,7 @@ async function execute(parsed, io) {
         try {
             await emitter.preflight(AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]));
             const summary = await runGitHubConnector({
+                pullRequestNumber,
                 config,
                 client,
                 emitter,
