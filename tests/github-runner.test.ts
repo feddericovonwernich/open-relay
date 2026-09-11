@@ -69,6 +69,224 @@ const genericConfig: GitHubConnectorConfig = {
   repositories: [{ name: "octo/repo", mode: "generic-check-runs" }],
   triggers: [],
 };
+const combinedConfig: GitHubConnectorConfig = {
+  ...config,
+  repositories: [{
+    name: "octo/repo",
+    mode: "configured-tools-and-generic-check-runs",
+  }],
+};
+
+test("combined mode emits configured tools and generic CI independently", async () => {
+  const calls: string[] = [];
+  const emissions: string[] = [];
+  const client = {
+    ...clientFor(),
+    listCompletedCheckRuns: async () => {
+      calls.push("completed");
+      return [...snapshot.checkRuns];
+    },
+    listCurrentCheckRuns: async () => {
+      calls.push("current");
+      return [checkRun(20, { name: "Build" })];
+    },
+  };
+
+  const result = await runGitHubCycle({
+    config: combinedConfig,
+    client,
+    emitter: {
+      emit: async () => {
+        emissions.push("configured");
+        return "emitted";
+      },
+      emitAggregate: async () => "emitted",
+      emitCiSettled: async () => {
+        emissions.push("ci");
+        return "emitted";
+      },
+    },
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+
+  assert.deepEqual(calls, ["completed", "current"]);
+  assert.deepEqual(emissions, ["configured", "ci"]);
+  assert.equal(result.emitted, 2);
+});
+
+test("pending generic checks do not suppress configured notifications", async () => {
+  let configured = 0;
+  let ci = 0;
+  const result = await runGitHubCycle({
+    config: combinedConfig,
+    client: {
+      ...clientFor(),
+      listCurrentCheckRuns: async () => [checkRun(21, {
+        status: "queued",
+        conclusion: null,
+        completedAt: null,
+      })],
+    },
+    emitter: {
+      emit: async () => { configured += 1; return "emitted"; },
+      emitAggregate: async () => "emitted",
+      emitCiSettled: async () => { ci += 1; return "emitted"; },
+    },
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+
+  assert.equal(configured, 1);
+  assert.equal(ci, 0);
+  assert.equal(result.emitted, 1);
+});
+
+test("CI definition drift disables only combined CI settlement", async () => {
+  const disabledCiRepositories = new Set<string>();
+  let configured = 0;
+  let currentCalls = 0;
+  const client = {
+    ...clientFor(),
+    listCurrentCheckRuns: async () => {
+      currentCalls += 1;
+      return [checkRun(22)];
+    },
+  };
+  const emitter = {
+    emit: async () => { configured += 1; return "emitted" as const; },
+    emitAggregate: async () => "emitted" as const,
+    emitCiSettled: async () => {
+      throw new GitHubRelayEmitterError("ci_invalid", "missing CI definition", 404);
+    },
+  };
+
+  const first = await runGitHubCycle({
+    config: combinedConfig,
+    client,
+    emitter,
+    once: true,
+    disabledCiRepositories,
+    verifyCurrentHead: async () => true,
+  });
+  const second = await runGitHubCycle({
+    config: combinedConfig,
+    client,
+    emitter,
+    once: true,
+    disabledCiRepositories,
+    verifyCurrentHead: async () => true,
+  });
+
+  assert.deepEqual([...disabledCiRepositories], ["octo/repo"]);
+  assert.equal(first.errors.some((error) => error.startsWith("ci_invalid:")), true);
+  assert.equal(second.errors.length, 0);
+  assert.equal(configured, 2);
+  assert.equal(currentCalls, 1);
+});
+test("continuous combined mode emits configured output before stable generic CI", async () => {
+  const state = new Map();
+  let configured = 0;
+  let ci = 0;
+  const emitter = {
+    emit: async () => { configured += 1; return "emitted" as const; },
+    emitAggregate: async () => "emitted" as const,
+    emitCiSettled: async () => { ci += 1; return "emitted" as const; },
+  };
+  const cycle = () => runGitHubCycle({
+    config: combinedConfig,
+    client: { ...clientFor(), listCurrentCheckRuns: async () => [checkRun(23)] },
+    emitter,
+    state,
+    verifyCurrentHead: async () => true,
+  });
+
+  const first = await cycle();
+  assert.equal(first.emitted, 1);
+  assert.equal(configured, 1);
+  assert.equal(ci, 0);
+  const second = await cycle();
+  assert.equal(second.emitted, 2);
+  assert.equal(configured, 2);
+  assert.equal(ci, 1);
+});
+
+test("combined discovery loads configured checks and reviews but skips current checks and state", async () => {
+  const calls: string[] = [];
+  const state = new Map();
+  const identities: Record<string, unknown>[] = [];
+  const copilotTrigger: TriggerConfig = {
+    id: "copilot-v1",
+    recognizer: "copilot-review",
+    match: { checkNames: [], appIds: [], appSlugs: [] },
+    emit: { type: "pr.automation.completed", version: 1 },
+  };
+  const client = {
+    ...clientFor(),
+    listCompletedCheckRuns: async () => { calls.push("completed"); return [...snapshot.checkRuns]; },
+    listCurrentCheckRuns: async () => { calls.push("current"); return [checkRun(24)]; },
+    listReviews: async () => { calls.push("reviews"); return []; },
+  };
+  const result = await runGitHubCycle({
+    config: { ...combinedConfig, triggers: [trigger, copilotTrigger] },
+    client,
+    state,
+    discover: true,
+    once: true,
+    onDiscovery: (identity) => identities.push(identity),
+  });
+
+  assert.equal(result.emitted, 0);
+  assert.deepEqual(calls, ["completed", "reviews"]);
+  assert.equal(identities.some((identity) => identity.kind === "check_run"), true);
+  assert.equal(state.get("octo/repo")?.ciObservations.size ?? 0, 0);
+});
+
+test("configured trigger drift does not suppress combined generic CI settlement", async () => {
+  let ci = 0;
+  const result = await runGitHubCycle({
+    config: combinedConfig,
+    client: { ...clientFor(), listCurrentCheckRuns: async () => [checkRun(25)] },
+    emitter: {
+      emit: async () => { throw new GitHubRelayEmitterError("trigger_invalid", "missing trigger", 404); },
+      emitAggregate: async () => "emitted",
+      emitCiSettled: async () => { ci += 1; return "emitted"; },
+    },
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+
+  assert.equal(ci, 1);
+  assert.equal(result.emitted, 1);
+  assert.deepEqual(result.errors, ["trigger_invalid: missing trigger"]);
+});
+
+test("stale configured aggregate verification does not suppress combined generic CI", async () => {
+  let verifications = 0;
+  let ci = 0;
+  const combinedAggregateConfig: GitHubConnectorConfig = {
+    ...combinedConfig,
+    aggregate: aggregateConfig.aggregate,
+  };
+  const result = await runGitHubCycle({
+    config: combinedAggregateConfig,
+    client: { ...clientFor(), listCurrentCheckRuns: async () => [checkRun(26)] },
+    recognizers: { sonarqube: () => [candidateFor("sonar-v1", "sonar-26")] },
+    emitter: {
+      emit: async () => "emitted",
+      emitAggregate: async () => "emitted",
+      emitCiSettled: async () => { ci += 1; return "emitted"; },
+    },
+    once: true,
+    verifyCurrentHead: async () => {
+      verifications += 1;
+      return verifications !== 2;
+    },
+  });
+
+  assert.equal(result.emitted, 2);
+  assert.equal(verifications, 3);
+});
 
 function checkRun(id: number, overrides: Partial<GitHubCheckRun> = {}): GitHubCheckRun {
   return {

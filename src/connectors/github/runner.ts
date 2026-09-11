@@ -223,116 +223,115 @@ async function runRepository(
     summary.pullRequests += pullRequests.length;
     state.transientDelay = 0;
     state.nextEligibleAt = 0;
-    const generic = repository.mode === "generic-check-runs";
-    const requirements = generic
-      ? { checkRuns: "current" as const, reviews: false }
-      : deriveSnapshotRequirements(options.config.triggers);
+    const configured = repository.mode !== "generic-check-runs";
+    const generic = repository.mode !== "configured-tools";
+    const ciEnabled = generic
+      && !options.disabledCiRepositories?.has(repositoryName);
+    const configuredRequirements = deriveSnapshotRequirements(options.config.triggers);
     const snapshots = await mapConcurrent(
       pullRequests,
       4,
-      (pullRequest) => loadPrSnapshot(client, repositoryName, pullRequest, requirements, signal),
+      async (pullRequest) => {
+        const configuredSnapshot = configured
+          ? await loadPrSnapshot(client, repositoryName, pullRequest, configuredRequirements, signal)
+          : undefined;
+        const genericSnapshot = ciEnabled && (!options.discover || !configured)
+          ? await loadPrSnapshot(client, repositoryName, pullRequest, { checkRuns: "current", reviews: false }, signal)
+          : undefined;
+        return { configuredSnapshot, genericSnapshot };
+      },
     );
 
-    for (const snapshot of snapshots) {
+    for (const { configuredSnapshot, genericSnapshot } of snapshots) {
       if (options.discover) {
-        for (const identity of discoveryIdentities(snapshot)) {
-          options.onDiscovery?.({ repository: snapshot.repository.fullName, pullRequest: snapshot.pullRequest.number, ...identity });
-        }
-        if (generic) continue;
-      }
-      if (generic) {
-        const checks = settledCheckRuns(snapshot);
-        if (checks === undefined) {
-          state.ciObservations.delete(snapshot.pullRequest.number);
-          continue;
-        }
-        summary.candidates += checks.length;
-        const identity = ciSettledKey(normalizeCiSettled(snapshot, checks));
-        const previous = state.ciObservations.get(snapshot.pullRequest.number);
-        const observation: GitHubCiObservationState = previous === undefined || previous.headSha !== snapshot.pullRequest.headSha
-          ? { headSha: snapshot.pullRequest.headSha, identity, consecutive: 1, emittedIdentities: new Set<string>() }
-          : previous;
-        if (observation !== previous) {
-          state.ciObservations.set(snapshot.pullRequest.number, observation);
-        } else if (observation.identity !== identity) {
-          observation.identity = identity;
-          observation.consecutive = 1;
-        } else {
-          observation.consecutive += 1;
-        }
-        if (
-          options.emitter === undefined
-          || (!options.once && observation.consecutive < 2)
-          || observation.emittedIdentities.has(identity)
-        ) continue;
-
-        const verifyHead = options.headVerifier
-          ?? options.verifyCurrentHead
-          ?? ((candidate: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) =>
-            verifyCurrentHead(client, candidate, verifySignal));
-        try {
-          const current = await verifyHead({
-            repository: repositoryName,
-            pullRequestNumber: snapshot.pullRequest.number,
-            artifactHeadSha: snapshot.pullRequest.headSha,
-          }, signal);
-          if (!current) {
-            state.ciObservations.delete(snapshot.pullRequest.number);
-            summary.stale += 1;
-            continue;
+        const discoverySnapshot = configuredSnapshot ?? genericSnapshot;
+        if (discoverySnapshot !== undefined) {
+          for (const identity of discoveryIdentities(discoverySnapshot)) {
+            options.onDiscovery?.({
+              repository: discoverySnapshot.repository.fullName,
+              pullRequest: discoverySnapshot.pullRequest.number,
+              ...identity,
+            });
           }
-          const result = await options.emitter.emitCiSettled(snapshot, checks, signal);
-          if (result === "emitted") summary.emitted += 1;
-          else summary.replayed += 1;
-          observation.emittedIdentities.add(identity);
-        } catch (error) {
-          if (isAuthFailure(error) || isTransient(error)) throw error;
-          if (isFatalRelayFailure(error)) {
-            onFatal(error);
-            throw error;
-          }
-          if (isAbort(error, signal)) throw error;
-          if (error instanceof GitHubRelayEmitterError && (error.code === "ci_drift" || error.code === "ci_invalid")) {
-            options.disabledCiRepositories?.add(repositoryName);
-            summary.errors.push(`${error.code}: ${errorText(error)}`);
-            continue;
-          }
-          summary.errors.push(`emission ci ${snapshot.pullRequest.number}: ${errorText(error)}`);
         }
-        continue;
+        if (configuredSnapshot === undefined) continue;
       }
 
-      const recognizedByTrigger = new Map<string, CompletionCandidate[]>();
-      const erroredTriggers = new Set<string>();
-      for (const trigger of options.config.triggers) {
-        if (options.disabledTriggers?.has(trigger.id)) continue;
-        const configuredRecognizers = options.recognizers ?? {};
-        const recognizer = configuredRecognizers[trigger.recognizer] ?? recognizers[trigger.recognizer];
-        let candidates: readonly CompletionCandidate[];
-        try {
-          candidates = recognizer(snapshot, trigger as never);
-          recognizedByTrigger.set(trigger.id, [...candidates]);
-        } catch (error) {
-          erroredTriggers.add(trigger.id);
-          summary.errors.push(`recognizer ${trigger.id}: ${errorText(error)}`);
-          continue;
+      if (configuredSnapshot !== undefined) {
+        const snapshot = configuredSnapshot;
+        const recognizedByTrigger = new Map<string, CompletionCandidate[]>();
+        const erroredTriggers = new Set<string>();
+        for (const trigger of options.config.triggers) {
+          if (options.disabledTriggers?.has(trigger.id)) continue;
+          const configuredRecognizers = options.recognizers ?? {};
+          const recognizer = configuredRecognizers[trigger.recognizer] ?? recognizers[trigger.recognizer];
+          let candidates: readonly CompletionCandidate[];
+          try {
+            candidates = recognizer(snapshot, trigger as never);
+            recognizedByTrigger.set(trigger.id, [...candidates]);
+          } catch (error) {
+            erroredTriggers.add(trigger.id);
+            summary.errors.push(`recognizer ${trigger.id}: ${errorText(error)}`);
+            continue;
+          }
+          for (const candidate of candidates) {
+            summary.candidates += 1;
+            logCandidate(options.log, snapshot, candidate, "recognized");
+            if (options.discover || options.emitter === undefined) continue;
+            try {
+              const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
+              const current = await verifyHead({ repository: repositoryName, pullRequestNumber: candidate.pullRequestNumber, artifactHeadSha: candidate.artifactHeadSha }, signal);
+              if (!current) {
+                summary.stale += 1;
+                logCandidate(options.log, snapshot, candidate, "stale");
+                continue;
+              }
+              const result = await options.emitter.emit(trigger, snapshot, candidate, signal);
+              if (result === "emitted") summary.emitted += 1;
+              else summary.replayed += 1;
+              logCandidate(options.log, snapshot, candidate, result);
+            } catch (error) {
+              if (isAuthFailure(error) || isTransient(error)) throw error;
+              if (isFatalRelayFailure(error)) {
+                onFatal(error);
+                throw error;
+              }
+              if (isAbort(error, signal)) throw error;
+              erroredTriggers.add(trigger.id);
+              if (error instanceof GitHubRelayEmitterError && (error.code === "trigger_drift" || error.code === "trigger_invalid")) {
+                options.disabledTriggers?.add(trigger.id);
+                summary.errors.push(`${error.code}: ${errorText(error)}`);
+                logCandidate(options.log, snapshot, candidate, "error");
+                break;
+              }
+              summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
+              logCandidate(options.log, snapshot, candidate, "error");
+            }
+          }
         }
-        for (const candidate of candidates) {
-          summary.candidates += 1;
-          logCandidate(options.log, snapshot, candidate, "recognized");
-          if (options.discover || options.emitter === undefined) continue;
+        const aggregate = options.config.aggregate;
+        const aggregateCandidates = options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []);
+        const aggregateReady = aggregate !== undefined
+          && !options.discover
+          && options.emitter !== undefined
+          && !options.disabledAggregates?.has(aggregate.id)
+          && options.config.triggers.every((trigger) =>
+            !options.disabledTriggers?.has(trigger.id)
+            && !erroredTriggers.has(trigger.id)
+            && (recognizedByTrigger.get(trigger.id)?.length ?? 0) > 0);
+        if (aggregateReady) {
           try {
             const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
-            const current = await verifyHead({ repository: repositoryName, pullRequestNumber: candidate.pullRequestNumber, artifactHeadSha: candidate.artifactHeadSha }, signal);
-            if (!current) {
-              summary.stale += 1;
-              logCandidate(options.log, snapshot, candidate, "stale");
-              continue;
+            const current = await verifyHead({
+              repository: repositoryName,
+              pullRequestNumber: snapshot.pullRequest.number,
+              artifactHeadSha: snapshot.pullRequest.headSha,
+            }, signal);
+            if (current) {
+              const result = await options.emitter.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
+              if (result === "emitted") summary.emitted += 1;
+              else summary.replayed += 1;
             }
-            const result = await options.emitter.emit(trigger, snapshot, candidate, signal);
-            if (result === "emitted") summary.emitted += 1;
-            else summary.replayed += 1;
-            logCandidate(options.log, snapshot, candidate, result);
           } catch (error) {
             if (isAuthFailure(error) || isTransient(error)) throw error;
             if (isFatalRelayFailure(error)) {
@@ -340,54 +339,75 @@ async function runRepository(
               throw error;
             }
             if (isAbort(error, signal)) throw error;
-            erroredTriggers.add(trigger.id);
-            if (error instanceof GitHubRelayEmitterError && (error.code === "trigger_drift" || error.code === "trigger_invalid")) {
-              options.disabledTriggers?.add(trigger.id);
+            if (error instanceof GitHubRelayEmitterError && (error.code === "aggregate_drift" || error.code === "aggregate_invalid")) {
+              options.disabledAggregates?.add(aggregate.id);
               summary.errors.push(`${error.code}: ${errorText(error)}`);
-              logCandidate(options.log, snapshot, candidate, "error");
-              break;
+            } else {
+              summary.errors.push(`aggregate ${aggregate.id}: ${errorText(error)}`);
             }
-            summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
-            logCandidate(options.log, snapshot, candidate, "error");
           }
         }
       }
-      const aggregate = options.config.aggregate;
-      const aggregateCandidates = options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []);
-      const aggregateReady = aggregate !== undefined
-        && !options.discover
-        && options.emitter !== undefined
-        && !options.disabledAggregates?.has(aggregate.id)
-        && options.config.triggers.every((trigger) =>
-          !options.disabledTriggers?.has(trigger.id)
-          && !erroredTriggers.has(trigger.id)
-          && (recognizedByTrigger.get(trigger.id)?.length ?? 0) > 0);
-      if (aggregateReady) {
-        try {
-          const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
-          const current = await verifyHead({
-            repository: repositoryName,
-            pullRequestNumber: snapshot.pullRequest.number,
-            artifactHeadSha: snapshot.pullRequest.headSha,
-          }, signal);
-          if (!current) continue;
-          const result = await options.emitter!.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
-          if (result === "emitted") summary.emitted += 1;
-          else summary.replayed += 1;
-        } catch (error) {
-          if (isAuthFailure(error) || isTransient(error)) throw error;
-          if (isFatalRelayFailure(error)) {
-            onFatal(error);
-            throw error;
-          }
-          if (isAbort(error, signal)) throw error;
-          if (error instanceof GitHubRelayEmitterError && (error.code === "aggregate_drift" || error.code === "aggregate_invalid")) {
-            options.disabledAggregates?.add(aggregate.id);
-            summary.errors.push(`${error.code}: ${errorText(error)}`);
-            continue;
-          }
-          summary.errors.push(`aggregate ${aggregate.id}: ${errorText(error)}`);
+
+      if (genericSnapshot === undefined) continue;
+      const snapshot = genericSnapshot;
+      const checks = settledCheckRuns(snapshot);
+      if (checks === undefined) {
+        state.ciObservations.delete(snapshot.pullRequest.number);
+        continue;
+      }
+      summary.candidates += checks.length;
+      const identity = ciSettledKey(normalizeCiSettled(snapshot, checks));
+      const previous = state.ciObservations.get(snapshot.pullRequest.number);
+      const observation: GitHubCiObservationState = previous === undefined || previous.headSha !== snapshot.pullRequest.headSha
+        ? { headSha: snapshot.pullRequest.headSha, identity, consecutive: 1, emittedIdentities: new Set<string>() }
+        : previous;
+      if (observation !== previous) {
+        state.ciObservations.set(snapshot.pullRequest.number, observation);
+      } else if (observation.identity !== identity) {
+        observation.identity = identity;
+        observation.consecutive = 1;
+      } else {
+        observation.consecutive += 1;
+      }
+      if (
+        options.emitter === undefined
+        || (!options.once && observation.consecutive < 2)
+        || observation.emittedIdentities.has(identity)
+      ) continue;
+
+      const verifyHead = options.headVerifier
+        ?? options.verifyCurrentHead
+        ?? ((candidate: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) =>
+          verifyCurrentHead(client, candidate, verifySignal));
+      try {
+        const current = await verifyHead({
+          repository: repositoryName,
+          pullRequestNumber: snapshot.pullRequest.number,
+          artifactHeadSha: snapshot.pullRequest.headSha,
+        }, signal);
+        if (!current) {
+          state.ciObservations.delete(snapshot.pullRequest.number);
+          summary.stale += 1;
+          continue;
         }
+        const result = await options.emitter.emitCiSettled(snapshot, checks, signal);
+        if (result === "emitted") summary.emitted += 1;
+        else summary.replayed += 1;
+        observation.emittedIdentities.add(identity);
+      } catch (error) {
+        if (isAuthFailure(error) || isTransient(error)) throw error;
+        if (isFatalRelayFailure(error)) {
+          onFatal(error);
+          throw error;
+        }
+        if (isAbort(error, signal)) throw error;
+        if (error instanceof GitHubRelayEmitterError && (error.code === "ci_drift" || error.code === "ci_invalid")) {
+          options.disabledCiRepositories?.add(repositoryName);
+          summary.errors.push(`${error.code}: ${errorText(error)}`);
+          continue;
+        }
+        summary.errors.push(`emission ci ${snapshot.pullRequest.number}: ${errorText(error)}`);
       }
     }
     if (generic && !options.discover) {
