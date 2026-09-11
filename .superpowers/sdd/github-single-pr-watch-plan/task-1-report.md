@@ -33,7 +33,7 @@ Project-wide tests, formatters, linters, and builds were not run because the bri
 
 ## Commit
 
-`7d2a5e2` — `feat: add correlation-aware self-describing deliveries`
+`28ba488` — `feat: add correlation-aware self-describing deliveries`
 
 ## Self-review
 
