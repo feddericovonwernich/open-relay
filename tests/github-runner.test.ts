@@ -3,7 +3,7 @@ import test from "node:test";
 import { runGitHubConnector, runGitHubCycle, type ConnectorSummary } from "../src/connectors/github/runner.ts";
 import { GitHubRelayEmitterError, settledKey } from "../src/connectors/github/emitter.ts";
 import { GitHubClientError } from "../src/connectors/github/client.ts";
-import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot, CompletionCandidate, TriggerConfig } from "../src/connectors/github/types.ts";
+import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot, CompletionCandidate, TriggerConfig, GitHubCheckRun } from "../src/connectors/github/types.ts";
 
 const trigger = {
   id: "sonar-v1",
@@ -64,12 +64,366 @@ function summary(overrides: Partial<ConnectorSummary> = {}): ConnectorSummary {
   return { repositories: 1, pullRequests: 0, candidates: 0, emitted: 0, replayed: 0, stale: 0, errors: [], ...overrides };
 }
 
+const genericConfig: GitHubConnectorConfig = {
+  ...config,
+  repositories: [{ name: "octo/repo", mode: "generic-check-runs" }],
+  triggers: [],
+};
+
+function checkRun(id: number, overrides: Partial<GitHubCheckRun> = {}): GitHubCheckRun {
+  return {
+    id,
+    name: `CI ${id}`,
+    status: "completed",
+    conclusion: "success",
+    headSha: "abc",
+    completedAt: "2026-01-01T00:00:00.000Z",
+    detailsUrl: `https://checks/${id}`,
+    app: null,
+    pullRequests: [{ number: 7 }],
+    ...overrides,
+  };
+}
+
+function genericClient(
+  current: () => readonly GitHubCheckRun[],
+  repositories: readonly string[] = ["octo/repo"],
+) {
+  return {
+    listOpenPullRequests: async (repository: string) => repositories.includes(repository) ? [{ ...pullRequest, repositoryFullName: repository }] : [],
+    listRecentClosedPullRequests: async () => [],
+    listCompletedCheckRuns: async () => [],
+    listCurrentCheckRuns: async (_repository: string, _headSha: string) => [...current()],
+    listReviews: async () => [],
+    getPullRequest: async (_repository: string, number: number) => ({ ...pullRequest, number }),
+  };
+}
+
+function genericEmitter(
+  ci: Array<{ repository: string; checks: readonly GitHubCheckRun[] }> = [],
+  result: "emitted" | "replayed" = "emitted",
+) {
+  return {
+    emit: async () => { throw new Error("configured emit must not run"); },
+    emitAggregate: async () => { throw new Error("configured aggregate must not run"); },
+    emitCiSettled: async (snapshot: PrSnapshot, checks: readonly GitHubCheckRun[]) => {
+      ci.push({ repository: snapshot.repository.fullName, checks });
+      return result;
+    },
+  };
+}
+
+test("generic mode bypasses configured recognizers and aggregate", async () => {
+  const emitted: Array<{ repository: string; checks: readonly GitHubCheckRun[] }> = [];
+  const calls: string[] = [];
+  const client = {
+    ...genericClient(() => [checkRun(2, { name: "SonarCloud Code Analysis", app: { id: 42, slug: "sonarcloud" } })]),
+    listCompletedCheckRuns: async () => { calls.push("completed"); throw new Error("completed endpoint must not run"); },
+    listCurrentCheckRuns: async () => { calls.push("current"); return [checkRun(2, { name: "SonarCloud Code Analysis", app: { id: 42, slug: "sonarcloud" } })]; },
+    listReviews: async () => { calls.push("reviews"); return []; },
+  };
+  const result = await runGitHubCycle({
+    config: { ...genericConfig, triggers: [trigger], aggregate: aggregateConfig.aggregate },
+    client,
+    recognizers: { sonarqube: () => { throw new Error("configured recognizer must not run"); } },
+    emitter: genericEmitter(emitted),
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+  assert.equal(result.candidates, 1);
+  assert.equal(result.emitted, 1);
+  assert.equal(emitted.length, 1);
+  assert.deepEqual(calls, ["current"]);
+});
+
+test("mixed repositories keep generic and configured paths independent", async () => {
+  const mixed: GitHubConnectorConfig = {
+    ...config,
+    repositories: [
+      { name: "octo/generic", mode: "generic-check-runs" },
+      { name: "octo/configured", mode: "configured-tools" },
+    ],
+  };
+  const calls: string[] = [];
+  const client = {
+    ...genericClient(() => [checkRun(3)] , ["octo/generic", "octo/configured"]),
+    listCompletedCheckRuns: async (repository: string) => {
+      calls.push(`completed:${repository}`);
+      return repository === "octo/configured"
+        ? [{ ...checkRun(4), name: "SonarCloud Code Analysis", app: { id: 42, slug: "sonarcloud" } }]
+        : [];
+    },
+    listCurrentCheckRuns: async (repository: string) => {
+      calls.push(`current:${repository}`);
+      return repository === "octo/generic" ? [checkRun(3)] : [];
+    },
+  };
+  let ci = 0;
+  let configured = 0;
+  const result = await runGitHubCycle({
+    config: mixed,
+    client,
+    emitter: {
+      emit: async () => { configured += 1; return "emitted"; },
+      emitAggregate: async () => "emitted",
+      emitCiSettled: async () => { ci += 1; return "emitted"; },
+    },
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+  assert.equal(ci, 1);
+  assert.equal(configured, 1);
+  assert.deepEqual(calls.sort(), ["completed:octo/configured", "current:octo/generic"]);
+  assert.equal(result.emitted, 2);
+});
+
+test("generic continuous mode requires two identical terminal observations and deduplicates the third", async () => {
+  const state = new Map();
+  const checks = [checkRun(5)];
+  let calls = 0;
+  const result = [];
+  const emitter = genericEmitter();
+  emitter.emitCiSettled = async () => { calls += 1; return "emitted"; };
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    result.push(await runGitHubCycle({
+      config: genericConfig,
+      client: genericClient(() => checks),
+      emitter,
+      state,
+      verifyCurrentHead: async () => true,
+    }));
+  }
+  assert.deepEqual(result.map((entry) => [entry.candidates, entry.emitted, entry.replayed]), [[1, 0, 0], [1, 1, 0], [1, 0, 0]]);
+  assert.equal(calls, 1);
+});
+
+test("empty or pending generic observations reset stability state", async () => {
+  const state = new Map();
+  let checks: readonly GitHubCheckRun[] = [checkRun(6)];
+  let calls = 0;
+  const emitter = genericEmitter();
+  emitter.emitCiSettled = async () => { calls += 1; return "emitted"; };
+  const cycle = () => runGitHubCycle({ config: genericConfig, client: genericClient(() => checks), emitter, state, verifyCurrentHead: async () => true });
+  await cycle();
+  checks = [];
+  const empty = await cycle();
+  assert.equal(empty.candidates, 0);
+  assert.equal(state.get("octo/repo")?.ciObservations.size, 0);
+  checks = [checkRun(6, { status: "in_progress", completedAt: null })];
+  const pending = await cycle();
+  assert.equal(pending.candidates, 0);
+  assert.equal(state.get("octo/repo")?.ciObservations.size, 0);
+  checks = [checkRun(6)];
+  await cycle();
+  assert.equal(calls, 0);
+});
+
+test("generic once emits immediately while once plus discover only reports identities", async () => {
+  const onceCalls: Array<readonly GitHubCheckRun[]> = [];
+  const once = await runGitHubCycle({
+    config: genericConfig,
+    client: genericClient(() => [checkRun(7)]),
+    emitter: { ...genericEmitter(), emitCiSettled: async (_snapshot, checks) => { onceCalls.push(checks); return "emitted"; } },
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+  assert.equal(once.emitted, 1);
+  assert.equal(onceCalls.length, 1);
+  const state = new Map();
+  const identities: Record<string, unknown>[] = [];
+  const discovered = await runGitHubCycle({
+    config: genericConfig,
+    client: genericClient(() => [checkRun(7)]),
+    emitter: { ...genericEmitter(), emitCiSettled: async () => { throw new Error("discover must not emit"); } },
+    state,
+    once: true,
+    discover: true,
+    onDiscovery: (identity) => identities.push(identity),
+  });
+  assert.equal(discovered.emitted, 0);
+  assert.equal(identities.length, 1);
+  assert.equal(state.get("octo/repo")?.ciObservations.size ?? 0, 0);
+});
+
+test("generic head changes reset stability and stale final fence drops the observation", async () => {
+  const state = new Map();
+  let head = "abc";
+  const checks = () => [checkRun(8, { headSha: head })];
+  let verify = true;
+  let calls = 0;
+  const emitter = genericEmitter();
+  emitter.emitCiSettled = async () => { calls += 1; return "emitted"; };
+  const cycle = () => runGitHubCycle({
+    config: genericConfig,
+    client: { ...genericClient(checks), listOpenPullRequests: async () => [{ ...pullRequest, headSha: head }] },
+    emitter,
+    state,
+    verifyCurrentHead: async () => verify,
+  });
+  await cycle();
+  head = "def";
+  await cycle();
+  assert.equal(state.get("octo/repo")?.ciObservations.get(7)?.consecutive, 1);
+  verify = false;
+  const stale = await cycle();
+  assert.equal(stale.emitted, 0);
+  assert.equal(calls, 0);
+  assert.equal(state.get("octo/repo")?.ciObservations.size, 0);
+  verify = true;
+  await cycle();
+  await cycle();
+  assert.equal(calls, 1);
+});
+
+test("late additions, disappearance, conclusions, and timestamps restart stability", async () => {
+  const state = new Map();
+  let checks: readonly GitHubCheckRun[] = [checkRun(9)];
+  let calls = 0;
+  const emitter = genericEmitter();
+  emitter.emitCiSettled = async () => { calls += 1; return "emitted"; };
+  const cycle = () => runGitHubCycle({ config: genericConfig, client: genericClient(() => checks), emitter, state, verifyCurrentHead: async () => true });
+  await cycle();
+  await cycle();
+  for (const next of [
+    [checkRun(9), checkRun(10)],
+    [checkRun(9), checkRun(10)],
+    [checkRun(9)],
+    [checkRun(9)],
+    [checkRun(9, { conclusion: "failure" })],
+    [checkRun(9, { conclusion: "failure" })],
+    [checkRun(9, { conclusion: "failure", completedAt: "2026-01-02T00:00:00.000Z" })],
+    [checkRun(9, { conclusion: "failure", completedAt: "2026-01-02T00:00:00.000Z" })],
+  ] as const) {
+    checks = next;
+    await cycle();
+  }
+  assert.equal(calls, 4);
+});
+test("retained identities survive A to A+B to A transitions", async () => {
+  const state = new Map();
+  let checks: readonly GitHubCheckRun[] = [checkRun(11)];
+  const emitted: string[] = [];
+  const emitter = genericEmitter();
+  emitter.emitCiSettled = async (_snapshot, observed) => { emitted.push(observed.map((run) => run.id).join(",")); return "emitted"; };
+  const cycle = () => runGitHubCycle({ config: genericConfig, client: genericClient(() => checks), emitter, state, verifyCurrentHead: async () => true });
+  await cycle();
+  await cycle();
+  checks = [checkRun(11), checkRun(12)];
+  await cycle();
+  await cycle();
+  checks = [checkRun(11)];
+  await cycle();
+  await cycle();
+  assert.deepEqual(emitted, ["11", "11,12"]);
+});
+
+test("ordinary generic Relay failures remain eligible for retry", async () => {
+  const state = new Map();
+  let attempts = 0;
+  const emitter = genericEmitter();
+  emitter.emitCiSettled = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("temporary relay failure");
+    return "emitted";
+  };
+  const cycle = () => runGitHubCycle({ config: genericConfig, client: genericClient(() => [checkRun(13)]), emitter, state, verifyCurrentHead: async () => true });
+  const first = await cycle();
+  const second = await cycle();
+  const third = await cycle();
+  assert.equal(first.errors.length, 0);
+  assert.match(second.errors[0] ?? "", /temporary relay failure/);
+  assert.equal(third.emitted, 1);
+  assert.equal(attempts, 2);
+});
+
+test("ci_invalid disables only the affected generic repository", async () => {
+  const configWithTwo: GitHubConnectorConfig = {
+    ...genericConfig,
+    repositories: [
+      { name: "octo/bad", mode: "generic-check-runs" },
+      { name: "octo/good", mode: "generic-check-runs" },
+    ],
+  };
+  const disabled = new Set<string>();
+  let calls = 0;
+  const emitter = {
+    ...genericEmitter(),
+    emitCiSettled: async (snapshot: PrSnapshot) => {
+      calls += 1;
+      if (snapshot.repository.fullName === "octo/bad") throw new GitHubRelayEmitterError("ci_invalid", "missing definition", 404);
+      return "emitted" as const;
+    },
+  };
+  const cycle = () => runGitHubCycle({
+    config: configWithTwo,
+    client: genericClient(() => [checkRun(14)], ["octo/bad", "octo/good"]),
+    emitter,
+    state: new Map(),
+    disabledCiRepositories: disabled,
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+  const result = await cycle();
+  assert.deepEqual([...disabled], ["octo/bad"]);
+  assert.equal(calls, 2);
+  assert.equal(result.errors.filter((error) => error.startsWith("ci_invalid:")).length, 1);
+  await cycle();
+  assert.equal(calls, 3);
+});
+
+test("successful generic discovery removes observations for missing pull requests", async () => {
+  const state = new Map();
+  let pullRequests: readonly GitHubPullRequest[] = [pullRequest];
+  const client = {
+    ...genericClient(() => [checkRun(16)]),
+    listOpenPullRequests: async () => [...pullRequests],
+  };
+  await runGitHubCycle({
+    config: genericConfig,
+    client,
+    state,
+    verifyCurrentHead: async () => true,
+  });
+  assert.equal(state.get("octo/repo")?.ciObservations.has(7), true);
+  pullRequests = [];
+  await runGitHubCycle({
+    config: genericConfig,
+    client,
+    state,
+    verifyCurrentHead: async () => true,
+  });
+  assert.equal(state.get("octo/repo")?.ciObservations.size, 0);
+});
+test("targeted generic mode retains only the selected pull request observation", async () => {
+  const state = new Map();
+  const client = genericClient(() => [checkRun(17)]);
+  const emitter = genericEmitter();
+  await runGitHubCycle({ config: genericConfig, client, emitter, state, pullRequestNumber: 7 });
+  const repositoryState = state.get("octo/repo");
+  repositoryState?.ciObservations.set(8, repositoryState.ciObservations.get(7));
+  await runGitHubCycle({ config: genericConfig, client, emitter, state, pullRequestNumber: 7 });
+  assert.deepEqual([...repositoryState.ciObservations.keys()], [7]);
+});
+test("fresh generic state accepts a Relay replay without creating another event", async () => {
+  let calls = 0;
+  const result = await runGitHubCycle({
+    config: genericConfig,
+    client: genericClient(() => [checkRun(15)]),
+    emitter: { ...genericEmitter(), emitCiSettled: async () => { calls += 1; return "replayed"; } },
+    once: true,
+    verifyCurrentHead: async () => true,
+  });
+  assert.equal(result.emitted, 0);
+  assert.equal(result.replayed, 1);
+  assert.equal(calls, 1);
+});
+
 test("one-shot runner recognizes and emits a current candidate", async () => {
   const calls: unknown[] = [];
   const result = await runGitHubConnector({
     config,
     client: clientFor(),
-    emitter: { emit: async (...args) => { calls.push(args); return "emitted"; }, emitAggregate: async () => "emitted" },
+    emitter: { emit: async (...args) => { calls.push(args); return "emitted"; }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
     once: true,
     clock: () => Date.now(),
   });
@@ -124,7 +478,7 @@ test("stale candidates are counted but never emitted", async () => {
   const result = await runGitHubCycle({
     config,
     client: clientFor("new-head"),
-    emitter: { emit: async () => { emitted = true; return "emitted"; }, emitAggregate: async () => "emitted" },
+    emitter: { emit: async () => { emitted = true; return "emitted"; }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
   });
   assert.deepEqual(result, summary({ pullRequests: 1, candidates: 1, stale: 1 }));
   assert.equal(emitted, false);
@@ -160,6 +514,7 @@ test("trigger drift disables only that trigger for later cycles", async () => {
         throw new GitHubRelayEmitterError("trigger_drift", "drift");
       },
       emitAggregate: async () => "emitted",
+      emitCiSettled: async () => "emitted",
     },
     sleep: async () => {
       sleeps += 1;
@@ -266,7 +621,7 @@ test("Relay credential rejection is fatal", async () => {
   await assert.rejects(runGitHubCycle({
     config,
     client: clientFor(),
-    emitter: { emit: async () => { throw new GitHubRelayEmitterError("credential_failed", "runtime rejected", 401); }, emitAggregate: async () => "emitted" },
+    emitter: { emit: async () => { throw new GitHubRelayEmitterError("credential_failed", "runtime rejected", 401); }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
   }), /runtime rejected/);
 });
 
@@ -315,7 +670,7 @@ test("head verification transient failure enters repository backoff", async () =
     client: clientFor(),
     state,
     now: () => 0,
-    emitter: { emit: async () => "emitted", emitAggregate: async () => "emitted" },
+    emitter: { emit: async () => "emitted", emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
     verifyCurrentHead: async () => { throw new GitHubClientError("github_transient_error", "head unavailable"); },
   });
   assert.equal(result.emitted, 0);
@@ -328,7 +683,7 @@ test("trigger drift stops remaining candidates for that trigger", async () => {
     config,
     client: clientFor(),
     recognizers: { sonarqube: () => [candidate("one"), candidate("two")] },
-    emitter: { emit: async () => { emissions += 1; throw new GitHubRelayEmitterError("trigger_drift", "drift"); }, emitAggregate: async () => "emitted" },
+    emitter: { emit: async () => { emissions += 1; throw new GitHubRelayEmitterError("trigger_drift", "drift"); }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
   });
   assert.equal(emissions, 1);
   assert.equal(result.candidates, 1);
@@ -353,6 +708,7 @@ test("emits aggregate only after every trigger has a current-head candidate", as
       aggregates.push([...candidates]);
       return "emitted" as const;
     },
+    emitCiSettled: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -377,6 +733,7 @@ test("suppresses aggregate emission when its final head verification is stale", 
       aggregates += 1;
       return "emitted" as const;
     },
+    emitCiSettled: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -412,6 +769,7 @@ test("aggregate mapping failures disable only aggregate emission across connecto
       aggregates += 1;
       throw new GitHubRelayEmitterError("aggregate_invalid", "unknown aggregate", 404);
     },
+    emitCiSettled: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -450,6 +808,7 @@ test("aggregate drift disables aggregate across cycles while individuals continu
       aggregates += 1;
       throw new GitHubRelayEmitterError("aggregate_drift", "mapping drift", 409);
     },
+    emitCiSettled: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -484,6 +843,7 @@ test("changed same-head aggregate membership produces a new aggregate", async ()
       keys.push(settledKey(aggregate, snapshot, candidates));
       return "emitted" as const;
     },
+    emitCiSettled: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", artifactId)],
