@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runGitHubConnector, runGitHubCycle, type ConnectorSummary } from "../src/connectors/github/runner.ts";
-import { GitHubRelayEmitterError } from "../src/connectors/github/emitter.ts";
+import { GitHubRelayEmitterError, settledKey } from "../src/connectors/github/emitter.ts";
 import { GitHubClientError } from "../src/connectors/github/client.ts";
 import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot, CompletionCandidate, TriggerConfig } from "../src/connectors/github/types.ts";
 
@@ -332,4 +332,94 @@ test("emits aggregate only after every trigger has a current-head candidate", as
   assert.equal(second.emitted, 3);
   assert.equal(aggregates.length, 1);
   assert.deepEqual(aggregates[0]?.map((entry) => entry.triggerId), ["sonar-v1", "bugbot-v1"]);
+});
+
+test("suppresses aggregate emission when its final head verification is stale", async () => {
+  let verifications = 0;
+  let aggregates = 0;
+  const emitter = {
+    emit: async () => "emitted" as const,
+    emitAggregate: async () => {
+      aggregates += 1;
+      return "emitted" as const;
+    },
+  };
+  const recognizers = {
+    sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
+    "cursor-bugbot": () => [candidateFor("bugbot-v1", "bugbot-1", "cursor-bugbot")],
+  };
+  const result = await runGitHubCycle({
+    config: aggregateConfig,
+    client: clientFor(),
+    emitter,
+    recognizers,
+    verifyCurrentHead: async () => {
+      verifications += 1;
+      return verifications < 3;
+    },
+  });
+  assert.equal(verifications, 3);
+  assert.equal(result.emitted, 2);
+  assert.equal(aggregates, 0);
+});
+
+test("aggregate mapping failures disable only aggregate emission across connector cycles", async () => {
+  const controller = new AbortController();
+  const disabledAggregates = new Set<string>();
+  let sleeps = 0;
+  let individuals = 0;
+  let aggregates = 0;
+  const emitter = {
+    emit: async () => {
+      individuals += 1;
+      return "emitted" as const;
+    },
+    emitAggregate: async () => {
+      aggregates += 1;
+      throw new GitHubRelayEmitterError("aggregate_invalid", "unknown aggregate", 404);
+    },
+  };
+  const recognizers = {
+    sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
+    "cursor-bugbot": () => [candidateFor("bugbot-v1", "bugbot-1", "cursor-bugbot")],
+  };
+  const result = await runGitHubConnector({
+    config: aggregateConfig,
+    client: clientFor(),
+    emitter,
+    recognizers,
+    disabledAggregates,
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 2) controller.abort();
+    },
+    signal: controller.signal,
+  });
+  assert.equal(aggregates, 1);
+  assert.equal(individuals, 4);
+  assert.deepEqual([...disabledAggregates], ["settled-v1"]);
+  assert.equal(result.errors.filter((error) => error.startsWith("aggregate_invalid:")).length, 1);
+});
+
+test("changed same-head aggregate membership produces a new aggregate", async () => {
+  let artifactId = "one";
+  const members: string[][] = [];
+  const keys: string[] = [];
+  const emitter = {
+    emit: async () => "emitted" as const,
+    emitAggregate: async (aggregate: NonNullable<GitHubConnectorConfig["aggregate"]>, snapshot: PrSnapshot, candidates: readonly CompletionCandidate[]) => {
+      members.push(candidates.map((entry) => entry.artifactId));
+      keys.push(settledKey(aggregate, snapshot, candidates));
+      return "emitted" as const;
+    },
+  };
+  const recognizers = {
+    sonarqube: () => [candidateFor("sonar-v1", artifactId)],
+    "cursor-bugbot": () => [candidateFor("bugbot-v1", "bugbot-1", "cursor-bugbot")],
+  };
+  await runGitHubCycle({ config: aggregateConfig, client: clientFor(), emitter, recognizers });
+  artifactId = "two";
+  await runGitHubCycle({ config: aggregateConfig, client: clientFor(), emitter, recognizers });
+  assert.deepEqual(members, [["one", "bugbot-1"], ["two", "bugbot-1"]]);
+  assert.notEqual(keys[0], keys[1]);
 });
