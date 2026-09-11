@@ -30,3 +30,12 @@
 
 ## Concerns
 - Full project-wide typecheck/build and Task 4 onboarding/E2E gates are intentionally left to the parent agent per assignment boundaries.
+
+## Follow-up contract coverage
+- Added runner contracts for stale final-head suppression, aggregate-only 404 disablement while individuals continue, and changed same-head membership producing a distinct key.
+- TDD red observations:
+  - Removed final-head guard temporarily: `node --test tests/github-runner.test.ts` failed stale-head contract (`3 !== 2`).
+  - Removed aggregate disablement temporarily: same command failed mapping contract (`2 !== 1` aggregate attempts).
+  - Replaced membership hash temporarily with a constant: `node --test tests/github-emitter.test.ts tests/github-runner.test.ts` failed key regex and distinct-key assertions.
+- Green: `node --test tests/github-emitter.test.ts tests/github-runner.test.ts` — 28 tests passed, 0 failed.
+- Follow-up commit: `58d4dc2`.
