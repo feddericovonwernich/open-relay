@@ -17,6 +17,7 @@ export interface ConnectorSummary {
 }
 
 type Client = Pick<GitHubClient, "listOpenPullRequests" | "listRecentClosedPullRequests" | "listCompletedCheckRuns" | "listCurrentCheckRuns" | "listReviews" | "getPullRequest">;
+type Emitter = Pick<GitHubRelayEmitter, "emit" | "emitAggregate">;
 type Sleep = (milliseconds: number, signal: AbortSignal) => Promise<void>;
 type Log = (value: string) => void;
 type HeadVerifier = (candidate: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, signal?: AbortSignal) => Promise<boolean>;

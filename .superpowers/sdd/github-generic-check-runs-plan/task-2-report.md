@@ -32,3 +32,5 @@ The Task 2 production changes are now applied:
 - `src/connectors/github/runner.ts` includes the current endpoint in its typed client pick and concurrency-limited wrapper.
 
 Validation remains intentionally not run (no tests, builds, linters, or formatters).
+
+Review fix: restored the runner's `Emitter` Pick alias after adding the current-check-run client method, so `GitHubCycleOptions.emitter` remains typed and resolves correctly.
