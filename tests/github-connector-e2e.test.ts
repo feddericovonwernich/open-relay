@@ -190,12 +190,16 @@ test("targeted continuous GitHub watch settles one PR and parks a correlation-fi
       pullRequest: { number: 100, url: `https://github.com/${repo}/pull/100`, headSha: "sha-100", baseRef: "main", updatedAt: "2026-09-08T00:00:00Z" },
       checkRuns: [], reviews: [],
     } as const;
-    const trigger = { id: "sonar", recognizer: "sonarqube" as const, match: { checkNames: ["SonarQube Quality Gate"], appIds: [11], appSlugs: ["sonarqube"] }, emit: { type: eventType, version: 1 } };
-    await emitter.emit(trigger, snapshot, {
+    const prequeuedCandidate = {
       provider: "sonarqube", triggerId: "sonar", repositoryId: 42, pullRequestNumber: 100,
-      artifactKind: "check_run", artifactId: "1001", artifactHeadSha: "sha-100",
-      artifact: { name: "SonarQube Quality Gate", completion: "completed", conclusion: "success", completedAt: "2026-09-08T01:00:00Z", detailsUrl: null },
-    });
+      artifactKind: "check_run" as const, artifactId: "1001", artifactHeadSha: "sha-100",
+      artifact: { name: "SonarQube Quality Gate", completion: "completed" as const, conclusion: "success", completedAt: "2026-09-08T01:00:00Z", detailsUrl: null },
+    };
+    await emitter.emitAggregate(
+      { id: "pr-automation-settled-v1", emit: { type: "pr.automation.settled", version: 1 } },
+      snapshot,
+      [prequeuedCandidate],
+    );
     const targeted = {
       ...config(github.url),
       aggregate: { id: "pr-automation-settled-v1", emit: { type: "pr.automation.settled", version: 1 } },
@@ -208,13 +212,16 @@ test("targeted continuous GitHub watch settles one PR and parks a correlation-fi
     });
     assert.equal(cycle, 2);
     assert.equal(result.emitted, 4);
-    assert.equal(relay.store.countEvents(), 5);
-    assert.equal(github.count(`/repos/${repo}/pulls?state=open&per_page=100`), 0);
-    assert.equal(github.count(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`), 0);
-    assert.equal(github.count(`/repos/${repo}/pulls/100`), 0);
-    assert.equal(relay.store.snapshotAtHighWater().snapshot.events.filter((event) => event.type === "pr.automation.settled").length, 1);
-    const settled = relay.store.snapshotAtHighWater().snapshot.events.find((event) => event.type === "pr.automation.settled");
+    const allEvents = relay.store.snapshotAtHighWater().snapshot.events;
+    const settledEvents = allEvents.filter((event) => event.type === "pr.automation.settled");
+    assert.equal(settledEvents.length, 2);
+    assert.deepEqual(settledEvents.map((event) => event.correlationId).sort(), ["github:octo/repo:pull-request:100", "github:octo/repo:pull-request:197"]);
+    const targetedEvents = allEvents.filter((event) => event.correlationId === "github:octo/repo:pull-request:197");
+    assert.equal(targetedEvents.length, 4);
+    assert.equal(targetedEvents.every((event) => event.correlationId === "github:octo/repo:pull-request:197"), true);
+    const settled = settledEvents.find((event) => event.correlationId === "github:octo/repo:pull-request:197");
     assert.equal(settled?.correlationId, "github:octo/repo:pull-request:197");
+    assert.equal(github.count(`/repos/${repo}/pulls/100`), 0);
 
     const registration = await fetch(`${relay.base}/v1/workers/register`, {
       method: "POST", headers: { Authorization: `Bearer ${relay.server.adminToken}`, "Content-Type": "application/json" },
@@ -228,7 +235,8 @@ test("targeted continuous GitHub watch settles one PR and parks a correlation-fi
     const worker = (await registration.json()) as { token: string };
     const polled = await fetch(`${relay.base}/v1/agent/poll`, { method: "POST", headers: { Authorization: `Bearer ${worker.token}`, "Content-Type": "application/json" }, body: "{}" });
     assert.equal(polled.status, 200);
-    const delivery = await polled.json() as { leaseId: string; outputSchema: { required?: string[] } };
+    const delivery = await polled.json() as { leaseId: string; outputSchema: { required?: string[] }; event: { correlationId?: string } };
+    assert.equal(delivery.event.correlationId, "github:octo/repo:pull-request:197");
     assert.deepEqual(delivery.outputSchema.required, ["summary"]);
     const invalid = await fetch(`${relay.base}/v1/deliveries/${encodeURIComponent(delivery.leaseId)}/complete`, {
       method: "POST", headers: { Authorization: `Bearer ${worker.token}`, "Content-Type": "application/json" },

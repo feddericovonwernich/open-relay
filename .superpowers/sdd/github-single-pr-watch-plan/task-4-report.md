@@ -47,3 +47,9 @@
 
 - The prerequisite Task 3 implementation was already present in the parent commit chain; cherry-pick conflict resolution restored its reviewed runner state option and emitter narrowing without changing aggregate behavior.
 - No known functional concerns after all required gates passed.
+
+## Correlation-isolation follow-up
+
+- Review found the first E2E only prequeued `pr.automation.completed@1`, which could not prove a settled-only worker skipped PR 100.
+- Red evidence after changing the prequeue to a compatible PR100 `pr.automation.settled@1`: the assertion expecting one settled event failed with `2 !== 1`.
+- Green evidence: the targeted E2E now asserts two settled events with correlations for PR 100 and PR 197, four PR 197 events all carry the target correlation, and the leased delivery correlation is PR 197. `node --test tests/github-connector-e2e.test.ts` passed 6/6.
