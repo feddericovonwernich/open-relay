@@ -401,8 +401,10 @@ test("aggregate mapping failures disable only aggregate emission across connecto
   assert.equal(result.errors.filter((error) => error.startsWith("aggregate_invalid:")).length, 1);
 });
 
-test("aggregate drift disables only aggregate emission while individuals continue", async () => {
+test("aggregate drift disables aggregate across cycles while individuals continue", async () => {
+  const controller = new AbortController();
   const disabledAggregates = new Set<string>();
+  let sleeps = 0;
   let individuals = 0;
   let aggregates = 0;
   const emitter = {
@@ -419,14 +421,19 @@ test("aggregate drift disables only aggregate emission while individuals continu
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
     "cursor-bugbot": () => [candidateFor("bugbot-v1", "bugbot-1", "cursor-bugbot")],
   };
-  const result = await runGitHubCycle({
+  const result = await runGitHubConnector({
     config: aggregateConfig,
     client: clientFor(),
     emitter,
     recognizers,
     disabledAggregates,
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps === 2) controller.abort();
+    },
+    signal: controller.signal,
   });
-  assert.equal(individuals, 2);
+  assert.equal(individuals, 4);
   assert.equal(aggregates, 1);
   assert.deepEqual([...disabledAggregates], ["settled-v1"]);
   assert.deepEqual(result.errors, ["aggregate_drift: mapping drift"]);
