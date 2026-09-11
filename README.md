@@ -195,3 +195,16 @@ The test suite covers concurrent acceptance, definition immutability, lease race
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+### Targeted GitHub PR watch
+
+Run the connector and its parked harness worker as two persistent, harness-managed processes:
+
+```bash
+relay connect github --config .relay/connectors/github.json --pull-request 197
+relay agent poll pr-197-agent --definitions pr.automation.settled@1 --structured-output --context-tokens 5000 --correlation-id github:owner/repository:pull-request:197
+```
+
+Targeted mode requires one configured repository; `lookbackHours` is irrelevant and unrelated queued events cannot match the correlation-filtered worker. The connector stays running and silent while any configured trigger lacks a terminal current-head artifact. The poll stays parked without model turns; the settled event wakes it. To receive immediate artifacts too, use `--definitions pr.automation.completed@1,pr.automation.settled@1` and settle/re-poll after each delivery.
+
+Before `complete`, construct `body.result` against the returned `delivery.outputSchema`. HTTP 400 for an invalid output leaves the lease active for a corrected reply. Neither command consumes model turns while blocked.

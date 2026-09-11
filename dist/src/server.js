@@ -225,6 +225,10 @@ export function createRelayServer(options) {
         if (method === "POST" && path === "/v1/workers/register") {
             authenticateAdmin(request);
             const input = await body(request);
+            const correlationId = input.correlationId;
+            if (correlationId !== undefined && (typeof correlationId !== "string" || correlationId.length === 0)) {
+                throw new StoreError("invalid_request", "correlationId must be a non-empty string");
+            }
             const capabilities = {
                 workerId: requiredString(input.workerId, "workerId"),
                 allowedDefinitions: Array.isArray(input.allowedDefinitions) ? input.allowedDefinitions.filter((value) => typeof value === "string") : [],
@@ -233,6 +237,7 @@ export function createRelayServer(options) {
                 contextTokens: Number(input.contextTokens),
                 systemReserveTokens: Number(input.systemReserveTokens),
                 maxConcurrent: Number(input.maxConcurrent),
+                ...(correlationId === undefined ? {} : { correlationId }),
             };
             const registration = options.dispatcher.registerWorker(capabilities);
             send(request, response, 201, registration);

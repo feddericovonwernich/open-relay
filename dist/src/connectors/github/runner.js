@@ -1,6 +1,6 @@
 import { GitHubClient, GitHubClientError } from "./client.js";
 import { GitHubRelayEmitter, GitHubRelayEmitterError } from "./emitter.js";
-import { discoverPullRequests, deriveSnapshotRequirements, loadPrSnapshot, mapConcurrent, verifyCurrentHead } from "./poller.js";
+import { discoverPullRequest, discoverPullRequests, deriveSnapshotRequirements, loadPrSnapshot, mapConcurrent, verifyCurrentHead } from "./poller.js";
 import { recognizeSonarQube } from "./recognizers/sonarqube.js";
 import { recognizeCopilotReviews } from "./recognizers/copilot.js";
 import { recognizeCursorBugbot } from "./recognizers/bugbot.js";
@@ -132,7 +132,9 @@ async function runRepository(options, client, repository, summary, states, signa
     if (state.disabled || signal.aborted || now() < state.nextEligibleAt)
         return;
     try {
-        const pullRequests = await discoverPullRequests(client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal);
+        const pullRequests = options.pullRequestNumber === undefined
+            ? await discoverPullRequests(client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal)
+            : [await discoverPullRequest(client, repository, options.pullRequestNumber, signal)];
         summary.pullRequests += pullRequests.length;
         state.transientDelay = 0;
         state.nextEligibleAt = 0;
@@ -143,6 +145,8 @@ async function runRepository(options, client, repository, summary, states, signa
                 for (const identity of discoveryIdentities(snapshot))
                     options.onDiscovery?.({ repository: snapshot.repository.fullName, pullRequest: snapshot.pullRequest.number, ...identity });
             }
+            const recognizedByTrigger = new Map();
+            const erroredTriggers = new Set();
             for (const trigger of options.config.triggers) {
                 if (options.disabledTriggers?.has(trigger.id))
                     continue;
@@ -151,8 +155,10 @@ async function runRepository(options, client, repository, summary, states, signa
                 let candidates;
                 try {
                     candidates = recognizer(snapshot, trigger);
+                    recognizedByTrigger.set(trigger.id, [...candidates]);
                 }
                 catch (error) {
+                    erroredTriggers.add(trigger.id);
                     summary.errors.push(`recognizer ${trigger.id}: ${errorText(error)}`);
                     continue;
                 }
@@ -185,6 +191,7 @@ async function runRepository(options, client, repository, summary, states, signa
                         }
                         if (isAbort(error, signal))
                             throw error;
+                        erroredTriggers.add(trigger.id);
                         if (error instanceof GitHubRelayEmitterError && (error.code === "trigger_drift" || error.code === "trigger_invalid")) {
                             options.disabledTriggers?.add(trigger.id);
                             summary.errors.push(`${error.code}: ${errorText(error)}`);
@@ -194,6 +201,48 @@ async function runRepository(options, client, repository, summary, states, signa
                         summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
                         logCandidate(options.log, snapshot, candidate, "error");
                     }
+                }
+            }
+            const aggregate = options.config.aggregate;
+            const aggregateCandidates = options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []);
+            const aggregateReady = aggregate !== undefined
+                && !options.discover
+                && options.emitter !== undefined
+                && !options.disabledAggregates?.has(aggregate.id)
+                && options.config.triggers.every((trigger) => !options.disabledTriggers?.has(trigger.id)
+                    && !erroredTriggers.has(trigger.id)
+                    && (recognizedByTrigger.get(trigger.id)?.length ?? 0) > 0);
+            if (aggregateReady) {
+                try {
+                    const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify, verifySignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
+                    const current = await verifyHead({
+                        repository,
+                        pullRequestNumber: snapshot.pullRequest.number,
+                        artifactHeadSha: snapshot.pullRequest.headSha,
+                    }, signal);
+                    if (!current)
+                        continue;
+                    const result = await options.emitter.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
+                    if (result === "emitted")
+                        summary.emitted += 1;
+                    else
+                        summary.replayed += 1;
+                }
+                catch (error) {
+                    if (isAuthFailure(error) || isTransient(error))
+                        throw error;
+                    if (isFatalRelayFailure(error)) {
+                        onFatal(error);
+                        throw error;
+                    }
+                    if (isAbort(error, signal))
+                        throw error;
+                    if (error instanceof GitHubRelayEmitterError && (error.code === "aggregate_drift" || error.code === "aggregate_invalid")) {
+                        options.disabledAggregates?.add(aggregate.id);
+                        summary.errors.push(`${error.code}: ${errorText(error)}`);
+                        continue;
+                    }
+                    summary.errors.push(`aggregate ${aggregate.id}: ${errorText(error)}`);
                 }
             }
         }
@@ -219,7 +268,18 @@ async function runRepository(options, client, repository, summary, states, signa
         summary.errors.push(`repository ${repository}: ${errorText(error)}`);
     }
 }
+function validatePullRequestSelection(config, pullRequestNumber) {
+    if (pullRequestNumber === undefined)
+        return;
+    if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber <= 0) {
+        throw new Error("pull request number must be a positive safe integer");
+    }
+    if (config.repositories.length !== 1) {
+        throw new Error("pull request selection requires exactly one configured repository");
+    }
+}
 export async function runGitHubCycle(options) {
+    validatePullRequestSelection(options.config, options.pullRequestNumber);
     const parentSignal = options.signal ?? new AbortController().signal;
     const cycleController = new AbortController();
     const abortCycle = () => cycleController.abort();
@@ -232,7 +292,11 @@ export async function runGitHubCycle(options) {
     const states = options.state ?? new Map();
     const summary = emptySummary(options.config.repositories.length);
     const client = limitedClient(options.client, new RequestLimiter());
-    const cycleOptions = { ...options, disabledTriggers: options.disabledTriggers ?? new Set() };
+    const cycleOptions = {
+        ...options,
+        disabledTriggers: options.disabledTriggers ?? new Set(),
+        disabledAggregates: options.disabledAggregates ?? new Set(),
+    };
     let fatal;
     const onFatal = (error) => {
         if (fatal === undefined)
@@ -258,11 +322,13 @@ export async function runGitHubCycle(options) {
     return summary;
 }
 export async function runGitHubConnector(options) {
+    validatePullRequestSelection(options.config, options.pullRequestNumber);
     const signal = options.signal ?? new AbortController().signal;
     const sleep = options.sleep ?? DEFAULT_SLEEP;
     const state = options.state ?? new Map();
     const total = emptySummary(options.config.repositories.length);
     const disabledTriggers = options.disabledTriggers ?? new Set();
+    const disabledAggregates = options.disabledAggregates ?? new Set();
     const merge = (summary) => {
         total.pullRequests += summary.pullRequests;
         total.candidates += summary.candidates;
@@ -272,9 +338,7 @@ export async function runGitHubConnector(options) {
         total.errors.push(...summary.errors);
     };
     do {
-        if (signal.aborted)
-            break;
-        const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers });
+        const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers, disabledAggregates });
         merge(cycle);
         if (options.once || options.discover || signal.aborted)
             break;

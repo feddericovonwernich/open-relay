@@ -22,9 +22,12 @@ const basicPaths = [
 const githubPaths = [
   ".relay/connectors/github.json",
   ".relay/events/pr-automation-completed.v1.json",
+  ".relay/events/pr-automation-settled.v1.json",
   ".relay/schemas/pr-automation-completed.json",
+  ".relay/schemas/pr-automation-settled.json",
   ".relay/schemas/pr-automation-result.json",
   ".relay/handlers/pr-automation-completed.md",
+  ".relay/handlers/pr-automation-settled.md",
 ] as const;
 
 async function assertMatchesExample(directory: string, example: string, paths: readonly string[]): Promise<void> {
@@ -94,12 +97,13 @@ test("relay init --github creates discovery-ready GitHub configuration", async (
     assert.equal(await runCli(["init", "--github", "owner/repository"], { cwd: directory }), 0);
 
     const config = await loadGitHubConnectorConfig(join(directory, ".relay/connectors/github.json"), { discover: true });
-    assert.deepEqual(config.repositories, ["owner/repository"]);
-    assert.deepEqual(config.triggers.map(({ recognizer }) => recognizer), ["sonarqube", "copilot-review", "cursor-bugbot"]);
-    assert.equal(config.triggers.some((trigger) => "appIds" in trigger.match && trigger.match.appIds.length === 0), true);
-
+    assert.deepEqual(config.aggregate, {
+      id: "pr-automation-settled-v1",
+      emit: { type: "pr.automation.settled", version: 1 },
+    });
     const registry = loadRegistry(directory, ".relay/events");
     assert.equal(registry.resolve("pr.automation.completed", 1).definition.type, "pr.automation.completed");
+    assert.equal(registry.resolve("pr.automation.settled", 1).definition.type, "pr.automation.settled");
     await assertMatchesExample(directory, "github-pr-automation", [...basicPaths, ...githubPaths]);
   });
 });

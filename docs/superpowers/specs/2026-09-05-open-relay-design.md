@@ -205,6 +205,7 @@ interface Delivery {
   leaseId: string;
   leaseExpiresAt: string;
   hardDeadlineAt: string;
+  outputSchema: object;
 }
 ```
 
@@ -219,6 +220,7 @@ interface WorkerCapabilities {
   contextTokens: number;
   systemReserveTokens: number;
   maxConcurrent: number;
+  correlationId?: string;
 }
 ```
 

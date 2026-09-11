@@ -71,6 +71,7 @@ export interface GitHubCycleOptions {
   onDiscovery?: (identity: Record<string, unknown>) => void;
   discover?: boolean;
   pullRequestNumber?: number;
+  state?: Map<string, RepositoryState>;
   disabledTriggers?: Set<string>;
   disabledAggregates?: Set<string>;
   headVerifier?: HeadVerifier;
@@ -277,7 +278,7 @@ async function runRepository(
             artifactHeadSha: snapshot.pullRequest.headSha,
           }, signal);
           if (!current) continue;
-          const result = await options.emitter.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
+          const result = await options.emitter!.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
           if (result === "emitted") summary.emitted += 1;
           else summary.replayed += 1;
         } catch (error) {

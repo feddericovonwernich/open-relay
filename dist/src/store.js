@@ -261,7 +261,7 @@ class SqliteStore {
             const rows = this.queuedEvents.all(now);
             for (const row of rows) {
                 const revision = this.getRevision(String(row.definition_revision));
-                if (workers.some((worker) => this.agentMatches(revision, worker)))
+                if (workers.some((worker) => this.agentMatches(row, revision, worker)))
                     continue;
                 const eventId = String(row.id);
                 this.db.prepare("UPDATE events SET state = 'blocked', updated_at = ? WHERE id = ? AND state <> 'blocked'").run(now, eventId);
@@ -487,7 +487,7 @@ class SqliteStore {
                 const handler = revision.definition.handler;
                 if (handler.kind !== kind)
                     continue;
-                if (kind === "agent" && !this.agentMatches(revision, worker))
+                if (kind === "agent" && !this.agentMatches(row, revision, worker))
                     continue;
                 const leaseId = randomUUID();
                 const attempt = Number(row.attempt) + 1;
@@ -496,7 +496,7 @@ class SqliteStore {
                 this.db.prepare(`UPDATE events SET state = 'leased', attempt = ?, worker_id = ?, lease_id = ?,
           lease_expires_at = ?, hard_deadline_at = ?, cancel_requested_at = NULL, updated_at = ? WHERE id = ?`).run(attempt, workerId, leaseId, leaseExpiresAt, hardDeadlineAt, now, String(row.id));
                 this.insertUpdateRecord(String(row.id), { kind: "leased", attempt, workerId, leaseId, data: {}, createdAt: now });
-                return this.deliveryFromEvent(this.findEvent.get(String(row.id)));
+                return this.deliveryFromEvent(this.findEvent.get(String(row.id)), revision);
             }
             return undefined;
         });
@@ -504,7 +504,7 @@ class SqliteStore {
             this.notifyLeaseListeners();
         return delivery;
     }
-    agentMatches(revision, worker) {
+    agentMatches(row, revision, worker) {
         const definition = revision.definition;
         if (definition.handler.kind !== "agent")
             return false;
@@ -516,7 +516,8 @@ class SqliteStore {
         if (definition.requires.structuredOutput && !worker.structuredOutput)
             return false;
         const requiredContext = Math.max(definition.requires.minContextTokens, worker.systemReserveTokens + definition.requires.maxInputTokens + definition.requires.maxOutputTokens);
-        return worker.contextTokens >= requiredContext;
+        return worker.contextTokens >= requiredContext
+            && (worker.correlationId === undefined || String(row.correlation_id) === worker.correlationId);
     }
     transition(authority, states, nextState, update) {
         transaction(this.db, () => {
@@ -584,7 +585,7 @@ class SqliteStore {
     insertUpdateRecord(eventId, update) {
         this.insertUpdate.run(eventId, update.kind, update.attempt ?? null, update.workerId ?? null, update.leaseId ?? null, json(update.data, "update"), update.createdAt ?? this.clock.now());
     }
-    deliveryFromEvent(row) {
+    deliveryFromEvent(row, revision) {
         return {
             event: {
                 id: String(row.id), producerId: String(row.producer_id), idempotencyKey: String(row.idempotency_key),
@@ -593,6 +594,7 @@ class SqliteStore {
                 emittedAt: new Date(Number(row.created_at)).toISOString(),
                 ...(row.correlation_id == null ? {} : { correlationId: String(row.correlation_id) }),
             },
+            outputSchema: revision.outputSchema,
             attempt: Number(row.attempt), workerId: String(row.worker_id), leaseId: String(row.lease_id),
             leaseExpiresAt: new Date(Number(row.lease_expires_at)).toISOString(), hardDeadlineAt: new Date(Number(row.hard_deadline_at)).toISOString(),
         };

@@ -32,3 +32,35 @@ export function normalizeCompletion(snapshot, candidate) {
         },
     });
 }
+export function normalizeSettled(snapshot, candidates) {
+    const artifacts = candidates.map((candidate) => ({
+        triggerId: candidate.triggerId,
+        provider: candidate.provider,
+        kind: candidate.artifactKind,
+        id: candidate.artifactId,
+        name: candidate.artifact.name,
+        completion: candidate.artifact.completion,
+        conclusion: candidate.artifact.conclusion,
+        completedAt: candidate.artifact.completedAt,
+        detailsUrl: candidate.artifact.detailsUrl,
+    }));
+    artifacts.sort((left, right) => {
+        const triggerOrder = left.triggerId < right.triggerId ? -1 : left.triggerId > right.triggerId ? 1 : 0;
+        if (triggerOrder !== 0)
+            return triggerOrder;
+        const kindOrder = left.kind < right.kind ? -1 : left.kind > right.kind ? 1 : 0;
+        return kindOrder !== 0 ? kindOrder : left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    });
+    return freezeDeep({
+        schemaVersion: 1,
+        provider: "github",
+        repository: { id: snapshot.repository.id, fullName: snapshot.repository.fullName },
+        pullRequest: {
+            number: snapshot.pullRequest.number,
+            url: snapshot.pullRequest.url,
+            headSha: snapshot.pullRequest.headSha,
+            baseRef: snapshot.pullRequest.baseRef,
+        },
+        artifacts,
+    });
+}

@@ -11,6 +11,10 @@ function isDelivery(value) {
         return false;
     }
     return typeof value.event.id === "string"
+        && "outputSchema" in value
+        && typeof value.outputSchema === "object"
+        && value.outputSchema !== null
+        && !Array.isArray(value.outputSchema)
         && "workerId" in value
         && typeof value.workerId === "string"
         && "leaseId" in value
