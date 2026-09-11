@@ -517,7 +517,7 @@ class SqliteStore {
             return false;
         const requiredContext = Math.max(definition.requires.minContextTokens, worker.systemReserveTokens + definition.requires.maxInputTokens + definition.requires.maxOutputTokens);
         return worker.contextTokens >= requiredContext
-            && (worker.correlationId === undefined || String(row.correlation_id) === worker.correlationId);
+            && (worker.correlationId === undefined || (row.correlation_id !== null && String(row.correlation_id) === worker.correlationId));
     }
     transition(authority, states, nextState, update) {
         transaction(this.db, () => {

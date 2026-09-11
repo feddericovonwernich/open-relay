@@ -64,3 +64,31 @@ export function normalizeSettled(snapshot, candidates) {
         artifacts,
     });
 }
+export function normalizeCiSettled(snapshot, checks) {
+    const normalized = checks.map((check) => ({
+        id: String(check.id),
+        name: check.name,
+        conclusion: check.conclusion,
+        completedAt: check.completedAt ?? "",
+        detailsUrl: check.detailsUrl,
+    }));
+    normalized.sort((left, right) => {
+        const idOrder = Number(left.id) - Number(right.id);
+        return idOrder !== 0 ? idOrder : left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+    });
+    return freezeDeep({
+        schemaVersion: 1,
+        provider: "github",
+        repository: { id: snapshot.repository.id, fullName: snapshot.repository.fullName },
+        pullRequest: {
+            number: snapshot.pullRequest.number,
+            url: snapshot.pullRequest.url,
+            headSha: snapshot.pullRequest.headSha,
+            baseRef: snapshot.pullRequest.baseRef,
+        },
+        outcome: normalized.every(({ conclusion }) => conclusion === "success" || conclusion === "neutral" || conclusion === "skipped")
+            ? "success"
+            : "failure",
+        checks: normalized,
+    });
+}
