@@ -245,7 +245,11 @@ function repository(value: unknown): GitHubRepositoryConfig {
     invalid("repository");
   }
   const mode = record.mode;
-  if (mode !== "configured-tools" && mode !== "generic-check-runs") invalid("repository_mode");
+  if (
+    mode !== "configured-tools"
+    && mode !== "generic-check-runs"
+    && mode !== "configured-tools-and-generic-check-runs"
+  ) invalid("repository_mode");
   return { name: repositoryName, mode };
 }
 
@@ -282,11 +286,13 @@ export function validateGitHubConnectorConfig(
     if (repositoryNames.has(normalizedName)) invalid("repository_duplicate");
     repositoryNames.add(normalizedName);
   }
-  const allGeneric = repositories.every((entry) => entry.mode === "generic-check-runs");
+  const hasConfiguredRepositories = repositories.some(
+    (entry) => entry.mode !== "generic-check-runs",
+  );
 
   const rawTriggers = array(record.triggers, "triggers");
-  if (rawTriggers.length === 0 && !allGeneric) invalid("triggers_required");
-  if (rawTriggers.length > 0 && allGeneric) invalid("triggers_unused");
+  if (rawTriggers.length === 0 && hasConfiguredRepositories) invalid("triggers_required");
+  if (rawTriggers.length > 0 && !hasConfiguredRepositories) invalid("triggers_unused");
   const ids = new Set<string>();
   const triggers = rawTriggers.map((entry) => {
     const normalized = trigger(entry, options.discover === true);
@@ -294,7 +300,7 @@ export function validateGitHubConnectorConfig(
     ids.add(normalized.id);
     return normalized;
   });
-  if (allGeneric && record.aggregate !== undefined) invalid("aggregate_unused");
+  if (!hasConfiguredRepositories && record.aggregate !== undefined) invalid("aggregate_unused");
   const aggregateConfig = record.aggregate === undefined ? undefined : aggregate(record.aggregate);
   if (aggregateConfig !== undefined && ids.has(aggregateConfig.id)) invalid("aggregate_id_duplicate");
 

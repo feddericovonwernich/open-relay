@@ -2,7 +2,10 @@ export type RecognizerId = "sonarqube" | "copilot-review" | "cursor-bugbot";
 
 export interface GitHubRepositoryConfig {
   name: string;
-  mode: "configured-tools" | "generic-check-runs";
+  mode:
+    | "configured-tools"
+    | "generic-check-runs"
+    | "configured-tools-and-generic-check-runs";
 }
 
 export interface GitHubConnectorConfig {

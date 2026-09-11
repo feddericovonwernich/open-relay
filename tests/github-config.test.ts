@@ -174,6 +174,44 @@ test("requires exactly name and a supported repository mode", () => {
     assert.throws(() => validateGitHubConnectorConfig(value), errorWithCode("repository_mode"));
   }
 });
+test("accepts and freezes combined configured-tool and generic Check Run mode", () => {
+  const config = validateGitHubConnectorConfig({
+    ...validConfig(),
+    repositories: [{
+      name: "owner/repository",
+      mode: "configured-tools-and-generic-check-runs",
+    }],
+    aggregate: {
+      id: "settled-v1",
+      emit: { type: "pr.automation.settled", version: 1 },
+    },
+  });
+
+  assert.deepEqual(config.repositories, [{
+    name: "owner/repository",
+    mode: "configured-tools-and-generic-check-runs",
+  }]);
+  assert.equal(Object.isFrozen(config.repositories[0]), true);
+  assert.deepEqual(config.aggregate, {
+    id: "settled-v1",
+    emit: { type: "pr.automation.settled", version: 1 },
+  });
+});
+
+test("combined mode requires configured triggers", () => {
+  assert.throws(
+    () => validateGitHubConnectorConfig({
+      ...validConfig(),
+      repositories: [{
+        name: "owner/repository",
+        mode: "configured-tools-and-generic-check-runs",
+      }],
+      triggers: [],
+    }),
+    errorWithCode("triggers_required"),
+  );
+});
+
 
 test("rejects repository names that differ only by case", () => {
   assert.throws(
