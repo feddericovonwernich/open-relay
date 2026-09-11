@@ -1,5 +1,13 @@
 export type RecognizerId = "sonarqube" | "copilot-review" | "cursor-bugbot";
 
+export interface GitHubRepositoryConfig {
+  name: string;
+  mode:
+    | "configured-tools"
+    | "generic-check-runs"
+    | "configured-tools-and-generic-check-runs";
+}
+
 export interface GitHubConnectorConfig {
   connector: "github";
   apiBaseUrl: string;
@@ -7,7 +15,7 @@ export interface GitHubConnectorConfig {
   tokenEnv: string;
   pollIntervalMs: number;
   lookbackHours: number;
-  repositories: string[];
+  repositories: GitHubRepositoryConfig[];
   triggers: TriggerConfig[];
   aggregate?: {
     id: string;
@@ -140,4 +148,20 @@ export interface PrAutomationSettled {
   repository: { id: number; fullName: string };
   pullRequest: { number: number; url: string; headSha: string; baseRef: string };
   artifacts: PrAutomationSettledArtifact[];
+}
+export interface PrCiSettledCheck {
+  id: string;
+  name: string;
+  conclusion: string | null;
+  completedAt: string;
+  detailsUrl: string | null;
+}
+
+export interface PrCiSettled {
+  schemaVersion: 1;
+  provider: "github";
+  repository: { id: number; fullName: string };
+  pullRequest: { number: number; url: string; headSha: string; baseRef: string };
+  outcome: "success" | "failure";
+  checks: PrCiSettledCheck[];
 }

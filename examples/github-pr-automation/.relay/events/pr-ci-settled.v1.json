@@ -1,0 +1,31 @@
+{
+  "type": "pr.ci.settled",
+  "version": 1,
+  "inputSchema": ".relay/schemas/pr-ci-settled.json",
+  "outputSchema": ".relay/schemas/pr-automation-result.json",
+  "effectPolicy": "retry-safe",
+  "timeoutMs": 30000,
+  "hardDeadlineMs": 60000,
+  "retry": {
+    "maxAttempts": 3,
+    "backoffMs": [
+      1000,
+      5000
+    ],
+    "retryableCodes": [
+      "temporarily_unavailable"
+    ]
+  },
+  "requires": {
+    "tools": [],
+    "structuredOutput": true,
+    "minContextTokens": 0,
+    "maxInputTokens": 4000,
+    "maxOutputTokens": 1000,
+    "maxPayloadBytes": 65536
+  },
+  "handler": {
+    "kind": "agent",
+    "instructions": ".relay/handlers/pr-ci-settled.md"
+  }
+}

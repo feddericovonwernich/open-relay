@@ -5,7 +5,7 @@ function assertRepository(pr, repository) {
 }
 export function deriveSnapshotRequirements(triggers) {
     return {
-        checkRuns: triggers.some((trigger) => trigger.recognizer === "sonarqube" || trigger.recognizer === "cursor-bugbot"),
+        checkRuns: triggers.some((trigger) => trigger.recognizer === "sonarqube" || trigger.recognizer === "cursor-bugbot") ? "completed" : "none",
         reviews: triggers.some((trigger) => trigger.recognizer === "copilot-review"),
     };
 }
@@ -32,7 +32,11 @@ export async function discoverPullRequests(client, repository, cutoff, signal) {
 export async function loadPrSnapshot(client, repository, pullRequest, requirements, signal) {
     assertRepository(pullRequest, repository);
     const [checkRuns, reviews] = await Promise.all([
-        requirements.checkRuns ? client.listCompletedCheckRuns(repository, pullRequest.headSha, signal) : Promise.resolve([]),
+        requirements.checkRuns === "current"
+            ? client.listCurrentCheckRuns(repository, pullRequest.headSha, signal)
+            : requirements.checkRuns === "completed"
+                ? client.listCompletedCheckRuns(repository, pullRequest.headSha, signal)
+                : Promise.resolve([]),
         requirements.reviews ? client.listReviews(repository, pullRequest.number, signal) : Promise.resolve([]),
     ]);
     return {

@@ -6,7 +6,10 @@
   "pollIntervalMs": 15000,
   "lookbackHours": 24,
   "repositories": [
-    "owner/repository"
+    {
+      "name": "owner/repository",
+      "mode": "configured-tools"
+    }
   ],
   "triggers": [
     {

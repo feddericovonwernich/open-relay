@@ -29,6 +29,10 @@ const TRIGGER_KEYS = {
     match: true,
     emit: true,
 };
+const REPOSITORY_KEYS = {
+    name: true,
+    mode: true,
+};
 const CHECK_RUN_MATCH_KEYS = {
     checkNames: true,
     appIds: true,
@@ -212,6 +216,25 @@ function trigger(value, discover) {
     }
     return { id, recognizer, match, emit: emission };
 }
+function repository(value) {
+    if (!isRecord(value))
+        invalid("repository");
+    const record = object(value, "repository");
+    checkUnknownKeys(record, REPOSITORY_KEYS);
+    const repositoryName = record.name;
+    if (typeof repositoryName !== "string")
+        invalid("repository");
+    const [owner, name, ...extra] = repositoryName.split("/");
+    if (extra.length > 0 || !owner || !name || owner === "." || owner === ".." || name === "." || name === ".." || !REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) {
+        invalid("repository");
+    }
+    const mode = record.mode;
+    if (mode !== "configured-tools"
+        && mode !== "generic-check-runs"
+        && mode !== "configured-tools-and-generic-check-runs")
+        invalid("repository_mode");
+    return { name: repositoryName, mode };
+}
 function aggregate(value) {
     const record = object(value, "aggregate");
     checkUnknownKeys(record, { id: true, emit: true });
@@ -234,19 +257,22 @@ export function validateGitHubConnectorConfig(value, options = {}) {
     checkUnknownKeys(record, TOP_LEVEL_KEYS);
     if (record.connector !== "github")
         invalid("connector");
-    const repositories = array(record.repositories, "repositories").map((entry, index) => {
-        const repository = string(entry, `repositories[${index}]`);
-        const [owner, name, ...extra] = repository.split("/");
-        if (extra.length > 0 || !owner || !name || owner === "." || owner === ".." || name === "." || name === ".." || !REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) {
-            invalid("repository");
-        }
-        return repository;
-    });
+    const repositories = array(record.repositories, "repositories").map((entry) => repository(entry));
     if (repositories.length === 0)
         invalid("repository");
+    const repositoryNames = new Set();
+    for (const entry of repositories) {
+        const normalizedName = entry.name.toLowerCase();
+        if (repositoryNames.has(normalizedName))
+            invalid("repository_duplicate");
+        repositoryNames.add(normalizedName);
+    }
+    const hasConfiguredRepositories = repositories.some((entry) => entry.mode !== "generic-check-runs");
     const rawTriggers = array(record.triggers, "triggers");
-    if (rawTriggers.length === 0)
-        invalid("triggers");
+    if (rawTriggers.length === 0 && hasConfiguredRepositories)
+        invalid("triggers_required");
+    if (rawTriggers.length > 0 && !hasConfiguredRepositories)
+        invalid("triggers_unused");
     const ids = new Set();
     const triggers = rawTriggers.map((entry) => {
         const normalized = trigger(entry, options.discover === true);
@@ -255,6 +281,8 @@ export function validateGitHubConnectorConfig(value, options = {}) {
         ids.add(normalized.id);
         return normalized;
     });
+    if (!hasConfiguredRepositories && record.aggregate !== undefined)
+        invalid("aggregate_unused");
     const aggregateConfig = record.aggregate === undefined ? undefined : aggregate(record.aggregate);
     if (aggregateConfig !== undefined && ids.has(aggregateConfig.id))
         invalid("aggregate_id_duplicate");

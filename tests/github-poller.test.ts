@@ -28,6 +28,7 @@ function client(overrides: Partial<{
   listOpenPullRequests: (repository: string, signal?: AbortSignal) => Promise<GitHubPullRequest[]>;
   listRecentClosedPullRequests: (repository: string, cutoff: number, signal?: AbortSignal) => Promise<GitHubPullRequest[]>;
   listCompletedCheckRuns: (repository: string, headSha: string, signal?: AbortSignal) => Promise<GitHubCheckRun[]>;
+  listCurrentCheckRuns: (repository: string, headSha: string, signal?: AbortSignal) => Promise<GitHubCheckRun[]>;
   listReviews: (repository: string, number: number, signal?: AbortSignal) => Promise<GitHubPullRequestReview[]>;
   getPullRequest: (repository: string, number: number, signal?: AbortSignal) => Promise<GitHubPullRequest>;
 }> = {}) {
@@ -35,13 +36,14 @@ function client(overrides: Partial<{
     listOpenPullRequests: async () => [],
     listRecentClosedPullRequests: async () => [],
     listCompletedCheckRuns: async () => [],
+    listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
     getPullRequest: async (_repository: string, number: number) => pr(number),
     ...overrides,
   };
 }
 
-const requirements: SnapshotRequirements = { checkRuns: true, reviews: true };
+const requirements: SnapshotRequirements = { checkRuns: "completed", reviews: true };
 
 test("discovers all open and recent closed PRs, deduplicating by latest update", async () => {
   const calls: string[] = [];
@@ -88,9 +90,9 @@ test("passes the cutoff to closed discovery so old closed pages can stop", async
 });
 
 test("derives shared snapshot requirements from active recognizers", () => {
-  assert.deepEqual(deriveSnapshotRequirements([]), { checkRuns: false, reviews: false });
-  assert.deepEqual(deriveSnapshotRequirements([{ id: "sonar", recognizer: "sonarqube", match: { checkNames: [], appIds: [], appSlugs: [] }, emit: { type: "x", version: 1 } }]), { checkRuns: true, reviews: false });
-  assert.deepEqual(deriveSnapshotRequirements([{ id: "copilot", recognizer: "copilot-review", match: { userIds: [], appUrls: [], logins: [] }, emit: { type: "x", version: 1 } }]), { checkRuns: false, reviews: true });
+  assert.deepEqual(deriveSnapshotRequirements([]), { checkRuns: "none", reviews: false });
+  assert.deepEqual(deriveSnapshotRequirements([{ id: "sonar", recognizer: "sonarqube", match: { checkNames: [], appIds: [], appSlugs: [] }, emit: { type: "x", version: 1 } }]), { checkRuns: "completed", reviews: false });
+  assert.deepEqual(deriveSnapshotRequirements([{ id: "copilot", recognizer: "copilot-review", match: { userIds: [], appUrls: [], logins: [] }, emit: { type: "x", version: 1 } }]), { checkRuns: "none", reviews: true });
 });
 
 test("loads shared check runs once and only fetches reviews when required", async () => {
@@ -111,10 +113,37 @@ test("loads shared check runs once and only fetches reviews when required", asyn
   assert.equal(Object.isFrozen(snapshot.checkRuns), true);
   assert.equal(Object.isFrozen(snapshot.reviews), true);
 
-  await loadPrSnapshot(api, repository, pr(8), { checkRuns: true, reviews: false });
+  await loadPrSnapshot(api, repository, pr(8), { checkRuns: "completed", reviews: false });
   assert.equal(checks, 2);
   assert.equal(reviews, 1);
 });
+test("current snapshot loads all raw check statuses without completed or review calls", async () => {
+  const checkRuns: GitHubCheckRun[] = [
+    { id: 1, name: "queued", status: "queued", conclusion: null, headSha: "sha-7", completedAt: null, detailsUrl: "", app: null, pullRequests: [] },
+    { id: 2, name: "running", status: "in_progress", conclusion: null, headSha: "sha-7", completedAt: null, detailsUrl: null, app: null, pullRequests: [] },
+    { id: 3, name: "done", status: "completed", conclusion: "failure", headSha: "sha-7", completedAt: "2026-09-08T00:00:00Z", detailsUrl: "https://details", app: null, pullRequests: [] },
+  ];
+  let currentCalls = 0;
+  let completedCalls = 0;
+  let reviewCalls = 0;
+  const api = client({
+    listCurrentCheckRuns: async () => { currentCalls++; return checkRuns; },
+    listCompletedCheckRuns: async () => { completedCalls++; throw new Error("completed endpoint must not be called"); },
+    listReviews: async () => { reviewCalls++; throw new Error("reviews endpoint must not be called"); },
+  });
+  const snapshot = await loadPrSnapshot(api, repository, pr(7), { checkRuns: "current", reviews: false });
+  assert.equal(currentCalls, 1);
+  assert.equal(completedCalls, 0);
+  assert.equal(reviewCalls, 0);
+  assert.strictEqual(snapshot.checkRuns, checkRuns);
+  assert.deepEqual(snapshot.checkRuns.map((check) => [check.status, check.conclusion]), [
+    ["queued", null],
+    ["in_progress", null],
+    ["completed", "failure"],
+  ]);
+  assert.equal(Object.isFrozen(snapshot.checkRuns), true);
+});
+
 
 test("rejects pull requests whose decoded repository differs from the configured repository", async () => {
   const api = client({ listOpenPullRequests: async () => [{ ...pr(1), repositoryFullName: "other/repo" }] });

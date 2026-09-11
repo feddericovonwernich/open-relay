@@ -301,7 +301,7 @@ test("targeted GitHub connector rejects invalid selectors with exact errors", as
   await mkdir(join(root, ".relay", "connectors"), { recursive: true });
   await writeFile(join(root, ".relay", "connectors", "github.json"), JSON.stringify({
     connector: "github",
-    repositories: ["octo/repo"],
+    repositories: [{ name: "octo/repo", mode: "configured-tools" }],
     triggers: [{ id: "sonar-v1", recognizer: "sonarqube", match: { checkNames: ["SonarCloud Code Analysis"], appIds: [42], appSlugs: [] }, emit: { type: "x", version: 1 } }],
   }));
   try {
@@ -334,7 +334,10 @@ test("targeted GitHub connector checks repository count before token or runtime 
   await mkdir(join(root, ".relay", "connectors"), { recursive: true });
   await writeFile(join(root, ".relay", "connectors", "github.json"), JSON.stringify({
     connector: "github",
-    repositories: ["octo/repo", "octo/other"],
+    repositories: [
+      { name: "octo/repo", mode: "configured-tools" },
+      { name: "octo/other", mode: "configured-tools" },
+    ],
     triggers: [{ id: "sonar-v1", recognizer: "sonarqube", match: { checkNames: ["SonarCloud Code Analysis"], appIds: [42], appSlugs: [] }, emit: { type: "x", version: 1 } }],
   }));
   let stderr = "";

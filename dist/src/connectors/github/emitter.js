@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { normalizeCompletion, normalizeSettled } from "./normalize.js";
+import { normalizeCiSettled, normalizeCompletion, normalizeSettled } from "./normalize.js";
 export class GitHubRelayEmitterError extends Error {
     code;
     status;
@@ -103,6 +103,10 @@ export function settledKey(aggregate, snapshot, candidates) {
         .join("\0");
     const hash = createHash("sha256").update(members).digest("hex");
     return `github:${snapshot.repository.id}:aggregate:${aggregate.id}:pull-request:${snapshot.pullRequest.number}:head:${snapshot.pullRequest.headSha}:members:${hash}`;
+}
+export function ciSettledKey(payload) {
+    const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    return `github:${payload.repository.id}:ci-settled:pull-request:${payload.pullRequest.number}:head:${payload.pullRequest.headSha}:payload:${hash}`;
 }
 export class GitHubRelayEmitter {
     baseUrl;
@@ -210,17 +214,15 @@ export class GitHubRelayEmitter {
         const message = safeText(error.message ?? body ?? `relay request failed (${response.status})`, secrets);
         throw new GitHubRelayEmitterError(error.code ?? "relay_failed", message, response.status);
     }
-    async emitAggregate(aggregate, snapshot, candidates, signal) {
+    async postSettled(mapping, snapshot, payload, idempotencyKey, errors, signal) {
         const producerToken = await this.producerToken(snapshot.repository.id, signal);
-        const payload = normalizeSettled(snapshot, candidates);
-        const idempotencyKey = settledKey(aggregate, snapshot, candidates);
         const response = await this.request("/v1/events", producerToken, {
             method: "POST",
             signal,
             headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
             body: JSON.stringify({
-                type: aggregate.emit.type,
-                version: aggregate.emit.version,
+                type: mapping.emit.type,
+                version: mapping.emit.version,
                 payload,
                 idempotencyKey,
                 correlationId: pullRequestCorrelationId(snapshot.repository.fullName, snapshot.pullRequest.number),
@@ -234,12 +236,20 @@ export class GitHubRelayEmitter {
         const error = relayError(body);
         const secrets = [this.adminToken, producerToken];
         if (error.code === "idempotency_conflict" || response.status === 409) {
-            throw new GitHubRelayEmitterError("aggregate_drift", `aggregate ${aggregate.id} drifted for repository ${snapshot.repository.id}`, response.status);
+            throw new GitHubRelayEmitterError(errors.drift, `${mapping.id} drifted for repository ${snapshot.repository.id}`, response.status);
         }
         if (error.code === "definition_not_found" || response.status === 404) {
-            throw new GitHubRelayEmitterError("aggregate_invalid", `aggregate ${aggregate.id} references an unknown definition for repository ${snapshot.repository.id}`, response.status);
+            throw new GitHubRelayEmitterError(errors.invalid, `${mapping.id} references an unknown definition for repository ${snapshot.repository.id}`, response.status);
         }
         const message = safeText(error.message ?? body ?? `relay request failed (${response.status})`, secrets);
         throw new GitHubRelayEmitterError(error.code ?? "relay_failed", message, response.status);
+    }
+    async emitAggregate(aggregate, snapshot, candidates, signal) {
+        const payload = normalizeSettled(snapshot, candidates);
+        return this.postSettled(aggregate, snapshot, payload, settledKey(aggregate, snapshot, candidates), { drift: "aggregate_drift", invalid: "aggregate_invalid" }, signal);
+    }
+    async emitCiSettled(snapshot, checks, signal) {
+        const payload = normalizeCiSettled(snapshot, checks);
+        return this.postSettled({ id: "pr-ci-settled-v1", emit: { type: "pr.ci.settled", version: 1 } }, snapshot, payload, ciSettledKey(payload), { drift: "ci_drift", invalid: "ci_invalid" }, signal);
     }
 }

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { completionKey, GitHubRelayEmitter, pullRequestCorrelationId, settledKey } from "../src/connectors/github/emitter.ts";
-import { normalizeCompletion, normalizeSettled } from "../src/connectors/github/normalize.ts";
-import type { CompletionCandidate, PrSnapshot, TriggerConfig } from "../src/connectors/github/types.ts";
+import { ciSettledKey, completionKey, GitHubRelayEmitter, pullRequestCorrelationId, settledKey } from "../src/connectors/github/emitter.ts";
+import { normalizeCiSettled, normalizeCompletion, normalizeSettled } from "../src/connectors/github/normalize.ts";
+import type { CompletionCandidate, GitHubCheckRun, PrSnapshot, TriggerConfig } from "../src/connectors/github/types.ts";
 
 const trigger: TriggerConfig = {
   id: "copilot-v1",
@@ -35,6 +35,18 @@ const candidate: CompletionCandidate = {
   },
 };
 const aggregate = { id: "settled-v1", emit: { type: "pr.automation.settled", version: 1 } };
+const ciCheck = (overrides: Partial<GitHubCheckRun> = {}): GitHubCheckRun => ({
+  id: 2,
+  name: "build",
+  status: "completed",
+  conclusion: "success",
+  headSha: "head-1",
+  completedAt: "2026-09-08T01:00:00Z",
+  detailsUrl: "https://ci.example/build/2",
+  app: null,
+  pullRequests: [],
+  ...overrides,
+});
 
 function candidateFor(triggerId: string, kind: CompletionCandidate["artifactKind"], id: string): CompletionCandidate {
   return {
@@ -47,6 +59,9 @@ function candidateFor(triggerId: string, kind: CompletionCandidate["artifactKind
       completion: kind === "check_run" ? "completed" : "submitted",
     },
   };
+}
+function errorCode(value: unknown): unknown {
+  return value !== null && typeof value === "object" && "code" in value ? value.code : undefined;
 }
 
 function response(status: number, body: unknown): Response {
@@ -239,6 +254,7 @@ test("connector lifetime abort cancels shared credential issuance", async () => 
     credentials += 1;
     return new Promise<Response>((_resolve, reject) => {
       const abort = (): void => reject(init?.signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+
       if (init?.signal?.aborted) abort();
       else init?.signal?.addEventListener("abort", abort, { once: true });
     });
@@ -250,4 +266,80 @@ test("connector lifetime abort cancels shared credential issuance", async () => 
   await assert.rejects(first, (error: unknown) => error === "connector stopped");
   await assert.rejects(second, (error: unknown) => error === "connector stopped");
   assert.equal(credentials, 1);
+});
+test("emits the fixed generic CI event request and replays a 200 response", async () => {
+  const checks = [ciCheck({ id: 2, name: "build" }), ciCheck({ id: 1, name: "test", conclusion: "failure", detailsUrl: null })];
+  const requests: Request[] = [];
+  let eventCalls = 0;
+  const fetcher = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+    requests.push(new Request(input, init));
+    return requestUrl(input).pathname === "/v1/credentials"
+      ? response(201, { token: "producer-secret" })
+      : response(++eventCalls === 1 ? 201 : 200, { event: { id: "event-ci" } });
+  };
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+  const payload = normalizeCiSettled(snapshot, checks);
+  const key = ciSettledKey(payload);
+
+  assert.equal(await emitter.emitCiSettled(snapshot, checks), "emitted");
+  assert.equal(await emitter.emitCiSettled(snapshot, checks), "replayed");
+  assert.equal(requests.filter((request) => requestUrl(request).pathname === "/v1/credentials").length, 1);
+  const event = requests.find((request) => requestUrl(request).pathname === "/v1/events");
+  assert.ok(event);
+  const body = JSON.parse(await event.text()) as Record<string, unknown>;
+  assert.deepEqual(body, {
+    type: "pr.ci.settled",
+    version: 1,
+    payload,
+    idempotencyKey: key,
+    correlationId: "github:example/repo:pull-request:12",
+  });
+  assert.equal(event.headers.get("Authorization"), "Bearer producer-secret");
+  assert.equal(event.headers.get("Idempotency-Key"), key);
+  assert.equal(event.url.includes("producer-secret"), false);
+  assert.equal(JSON.stringify(body).includes("producer-secret"), false);
+  assert.equal(JSON.stringify(body).includes("admin-secret"), false);
+});
+
+test("generic CI keys are order-independent and change for every payload mutation", () => {
+  const first = ciCheck({ id: 1, name: "test", conclusion: "success", completedAt: "2026-09-08T01:00:00Z" });
+  const second = ciCheck({ id: 2, name: "build", conclusion: "success", completedAt: "2026-09-08T02:00:00Z" });
+  const baseline = ciSettledKey(normalizeCiSettled(snapshot, [first, second]));
+  const reversed = ciSettledKey(normalizeCiSettled(snapshot, [second, first]));
+  assert.equal(reversed, baseline);
+  assert.notEqual(ciSettledKey(normalizeCiSettled(snapshot, [first, second, ciCheck({ id: 3, name: "lint" })])), baseline, "late Check Run");
+  assert.notEqual(ciSettledKey(normalizeCiSettled(snapshot, [first])), baseline, "disappeared Check Run");
+  assert.notEqual(ciSettledKey(normalizeCiSettled(snapshot, [first, { ...second, conclusion: "failure" }])), baseline, "changed conclusion");
+  assert.notEqual(ciSettledKey(normalizeCiSettled(snapshot, [first, { ...second, completedAt: "2026-09-08T04:00:00Z" }])), baseline, "changed completion time");
+  assert.match(baseline, /^github:7:ci-settled:pull-request:12:head:head-1:payload:[a-f0-9]{64}$/);
+});
+
+test("maps generic CI drift and missing definitions to isolated error codes", async () => {
+  for (const [status, code, expected] of [[409, "idempotency_conflict", "ci_drift"], [404, "definition_not_found", "ci_invalid"]] as const) {
+    const fetcher = async (input: URL | RequestInfo): Promise<Response> => requestUrl(input).pathname === "/v1/credentials"
+      ? response(201, { token: "producer-secret" })
+      : response(status, { error: { code, message: "bad producer-secret generic payload" } });
+    const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+    await assert.rejects(emitter.emitCiSettled(snapshot, [ciCheck()]), (error: unknown) => {
+      assert.equal(errorCode(error), expected);
+      assert.match(String(error), /7/);
+      assert.equal(String(error).includes("producer-secret"), false);
+      assert.equal(String(error).includes("generic payload"), false);
+      return true;
+    });
+  }
+});
+
+test("redacts credentials from generic Relay failures", async () => {
+  const fetcher = async (input: URL | RequestInfo): Promise<Response> => requestUrl(input).pathname === "/v1/credentials"
+    ? response(201, { token: "producer-secret" })
+    : response(500, { error: { code: "relay_broken", message: "admin-secret producer-secret generic payload" } });
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+  await assert.rejects(emitter.emitCiSettled(snapshot, [ciCheck()]), (error: unknown) => {
+    assert.equal(errorCode(error), "relay_broken");
+    assert.equal(String(error).includes("admin-secret"), false);
+    assert.equal(String(error).includes("producer-secret"), false);
+    assert.equal(String(error).includes("generic payload"), true);
+    return true;
+  });
 });

@@ -153,6 +153,30 @@ Terminology:
 - **Recognizer:** identifies a provider-specific completion artifact.
 - **Trigger:** maps a recognized completion to an Open Relay event type and version.
 
+Repository modes:
+
+| Mode | Provider completion events | All Check Runs settled event |
+|---|---:|---:|
+| `configured-tools` | Yes | No |
+| `generic-check-runs` | No | Yes |
+| `configured-tools-and-generic-check-runs` | Yes | Yes |
+
+```json
+{
+  "name": "owner/repository",
+  "mode": "configured-tools-and-generic-check-runs"
+}
+```
+
+To receive SonarQube, Copilot, and Bugbot completion events plus one
+`pr.ci.settled@1` event, set the repository mode to
+`configured-tools-and-generic-check-runs`. Omit the optional `aggregate`
+mapping when exactly four events are required; configuring it also emits
+`pr.automation.settled@1`.
+
+Copilot is a submitted pull-request review and therefore does not appear in
+`pr.ci.settled@1.checks`.
+
 | Provider | Completion signal |
 |---|---|
 | SonarQube | Completed `SonarCloud Code Analysis` or `SonarQube Code Analysis` check with operator-pinned app identity |

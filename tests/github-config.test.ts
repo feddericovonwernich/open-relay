@@ -26,7 +26,7 @@ const bugbotMatch = {
 function validConfig() {
   return {
     connector: "github",
-    repositories: ["owner/repository"],
+    repositories: [{ name: "owner/repository", mode: "configured-tools" }],
     triggers: [
       { id: "sonar-v1", recognizer: "sonarqube", match: { ...sonarMatch }, emit: { type: "pr.automation.completed", version: 1 } },
       { id: "copilot-v1", recognizer: "copilot-review", match: { ...copilotMatch }, emit: { type: "pr.automation.completed", version: 1 } },
@@ -59,7 +59,7 @@ async function loadConfig(value: unknown) {
 test("loads a valid three-recognizer connector", async () => {
   const config = await loadConfig(validConfig());
   assert.equal(config.connector, "github");
-  assert.deepEqual(config.repositories, ["owner/repository"]);
+  assert.deepEqual(config.repositories, [{ name: "owner/repository", mode: "configured-tools" }]);
   assert.deepEqual(config.triggers.map((trigger) => trigger.recognizer), [
     "sonarqube",
     "copilot-review",
@@ -144,15 +144,138 @@ test("allows loopback HTTP only in test mode or explicit validation option", () 
   );
 });
 
-test("rejects invalid repositories", () => {
+test("rejects invalid repositories and legacy string entries", () => {
   assert.throws(
-    () => validateGitHubConnectorConfig({ ...validConfig(), repositories: ["https://github.com/owner/repository"] }),
+    () => validateGitHubConnectorConfig({ ...validConfig(), repositories: ["owner/repository"] }),
     errorWithCode("repository"),
   );
+  for (const name of [
+    "https://github.com/owner/repository",
+    "owner/../repository",
+  ]) {
+    assert.throws(
+      () => validateGitHubConnectorConfig({
+        ...validConfig(),
+        repositories: [{ name, mode: "configured-tools" }],
+      }),
+      errorWithCode("repository"),
+    );
+  }
+});
+
+test("requires exactly name and a supported repository mode", () => {
+  const extra = validConfig();
+  (extra.repositories[0] as Record<string, unknown>).extra = true;
+  assert.throws(() => validateGitHubConnectorConfig(extra), errorWithCode("unknown_property"));
+
+  for (const mode of [undefined, null, 1, "other"]) {
+    const value = validConfig();
+    (value.repositories[0] as Record<string, unknown>).mode = mode;
+    assert.throws(() => validateGitHubConnectorConfig(value), errorWithCode("repository_mode"));
+  }
+});
+test("accepts and freezes combined configured-tool and generic Check Run mode", () => {
+  const config = validateGitHubConnectorConfig({
+    ...validConfig(),
+    repositories: [{
+      name: "owner/repository",
+      mode: "configured-tools-and-generic-check-runs",
+    }],
+    aggregate: {
+      id: "settled-v1",
+      emit: { type: "pr.automation.settled", version: 1 },
+    },
+  });
+
+  assert.deepEqual(config.repositories, [{
+    name: "owner/repository",
+    mode: "configured-tools-and-generic-check-runs",
+  }]);
+  assert.equal(Object.isFrozen(config.repositories[0]), true);
+  assert.deepEqual(config.aggregate, {
+    id: "settled-v1",
+    emit: { type: "pr.automation.settled", version: 1 },
+  });
+});
+
+test("combined mode requires configured triggers", () => {
   assert.throws(
-    () => validateGitHubConnectorConfig({ ...validConfig(), repositories: ["owner/../repository"] }),
-    errorWithCode("repository"),
+    () => validateGitHubConnectorConfig({
+      ...validConfig(),
+      repositories: [{
+        name: "owner/repository",
+        mode: "configured-tools-and-generic-check-runs",
+      }],
+      triggers: [],
+    }),
+    errorWithCode("triggers_required"),
   );
+});
+
+
+test("rejects repository names that differ only by case", () => {
+  assert.throws(
+    () => validateGitHubConnectorConfig({
+      ...validConfig(),
+      repositories: [
+        { name: "owner/repository", mode: "configured-tools" },
+        { name: "OWNER/REPOSITORY", mode: "generic-check-runs" },
+      ],
+    }),
+    errorWithCode("repository_duplicate"),
+  );
+});
+
+test("allows empty triggers only when every repository is generic", () => {
+  assert.throws(
+    () => validateGitHubConnectorConfig({ ...validConfig(), triggers: [] }),
+    errorWithCode("triggers_required"),
+  );
+
+  const config = validateGitHubConnectorConfig({
+    ...validConfig(),
+    repositories: [{ name: "owner/repository", mode: "generic-check-runs" }],
+    triggers: [],
+  });
+  assert.deepEqual(config.repositories, [{ name: "owner/repository", mode: "generic-check-runs" }]);
+  assert.deepEqual(config.triggers, []);
+});
+
+test("rejects configured triggers when every repository is generic", () => {
+  assert.throws(
+    () => validateGitHubConnectorConfig({
+      ...validConfig(),
+      repositories: [{ name: "owner/repository", mode: "generic-check-runs" }],
+    }),
+    errorWithCode("triggers_unused"),
+  );
+});
+
+test("rejects aggregate mappings when every repository is generic", () => {
+  assert.throws(
+    () => validateGitHubConnectorConfig({
+      ...validConfig(),
+      repositories: [{ name: "owner/repository", mode: "generic-check-runs" }],
+      triggers: [],
+      aggregate: { id: "settled-v1", emit: { type: "pr.automation.settled", version: 1 } },
+    }),
+    errorWithCode("aggregate_unused"),
+  );
+});
+
+test("allows aggregate mappings for mixed repository modes", () => {
+  const config = validateGitHubConnectorConfig({
+    ...validConfig(),
+    repositories: [
+      { name: "owner/repository", mode: "configured-tools" },
+      { name: "other/repository", mode: "generic-check-runs" },
+    ],
+    aggregate: { id: "settled-v1", emit: { type: "pr.automation.settled", version: 1 } },
+  });
+  assert.deepEqual(config.aggregate, {
+    id: "settled-v1",
+    emit: { type: "pr.automation.settled", version: 1 },
+  });
 });
 
 test("rejects duplicate trigger IDs", () => {
@@ -188,10 +311,14 @@ test("deep freezes normalized configuration", () => {
   const config = validateGitHubConnectorConfig(validConfig());
   assert.equal(Object.isFrozen(config), true);
   assert.equal(Object.isFrozen(config.repositories), true);
+  assert.equal(Object.isFrozen(config.repositories[0]), true);
   assert.equal(Object.isFrozen(config.triggers[0]), true);
   assert.equal(Object.isFrozen(config.triggers[0].match), true);
   assert.throws(() => {
-    config.repositories.push("other/repository");
+    config.repositories.push({ name: "other/repository", mode: "configured-tools" });
+  }, TypeError);
+  assert.throws(() => {
+    Object.assign(config.repositories[0], { name: "other/repository" });
   }, TypeError);
 });
 test("validates and freezes the optional aggregate mapping", () => {

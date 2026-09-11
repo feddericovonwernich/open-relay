@@ -1,6 +1,8 @@
 import { GitHubClient, GitHubClientError } from "./client.js";
-import { GitHubRelayEmitter, GitHubRelayEmitterError } from "./emitter.js";
+import { GitHubRelayEmitter, GitHubRelayEmitterError, ciSettledKey } from "./emitter.js";
 import { discoverPullRequest, discoverPullRequests, deriveSnapshotRequirements, loadPrSnapshot, mapConcurrent, verifyCurrentHead } from "./poller.js";
+import { settledCheckRuns } from "./ci.js";
+import { normalizeCiSettled } from "./normalize.js";
 import { recognizeSonarQube } from "./recognizers/sonarqube.js";
 import { recognizeCopilotReviews } from "./recognizers/copilot.js";
 import { recognizeCursorBugbot } from "./recognizers/bugbot.js";
@@ -29,6 +31,7 @@ function limitedClient(client, limiter) {
         listOpenPullRequests: (repository, signal) => limiter.run(() => client.listOpenPullRequests(repository, signal), signal ?? new AbortController().signal),
         listRecentClosedPullRequests: (repository, cutoff, signal) => limiter.run(() => client.listRecentClosedPullRequests(repository, cutoff, signal), signal ?? new AbortController().signal),
         listCompletedCheckRuns: (repository, sha, signal) => limiter.run(() => client.listCompletedCheckRuns(repository, sha, signal), signal ?? new AbortController().signal),
+        listCurrentCheckRuns: (repository, sha, signal) => limiter.run(() => client.listCurrentCheckRuns(repository, sha, signal), signal ?? new AbortController().signal),
         listReviews: (repository, number, signal) => limiter.run(() => client.listReviews(repository, number, signal), signal ?? new AbortController().signal),
         getPullRequest: (repository, number, signal) => limiter.run(() => client.getPullRequest(repository, number, signal), signal ?? new AbortController().signal),
     };
@@ -123,64 +126,143 @@ function stateFor(states, repository) {
     const existing = states.get(repository);
     if (existing !== undefined)
         return existing;
-    const state = { transientDelay: 0, nextEligibleAt: 0, disabled: false };
+    const state = {
+        transientDelay: 0,
+        nextEligibleAt: 0,
+        disabled: false,
+        ciObservations: new Map(),
+    };
     states.set(repository, state);
     return state;
 }
 async function runRepository(options, client, repository, summary, states, signal, now, onFatal) {
-    const state = stateFor(states, repository);
-    if (state.disabled || signal.aborted || now() < state.nextEligibleAt)
+    const repositoryName = repository.name;
+    const state = stateFor(states, repositoryName);
+    if (state.disabled
+        || signal.aborted
+        || now() < state.nextEligibleAt
+        || (repository.mode === "generic-check-runs" && options.disabledCiRepositories?.has(repositoryName)))
         return;
     try {
         const pullRequests = options.pullRequestNumber === undefined
-            ? await discoverPullRequests(client, repository, now() - options.config.lookbackHours * 60 * 60 * 1000, signal)
-            : [await discoverPullRequest(client, repository, options.pullRequestNumber, signal)];
+            ? await discoverPullRequests(client, repositoryName, now() - options.config.lookbackHours * 60 * 60 * 1000, signal)
+            : [await discoverPullRequest(client, repositoryName, options.pullRequestNumber, signal)];
         summary.pullRequests += pullRequests.length;
         state.transientDelay = 0;
         state.nextEligibleAt = 0;
-        const requirements = deriveSnapshotRequirements(options.config.triggers);
-        const snapshots = await mapConcurrent(pullRequests, 4, (pullRequest) => loadPrSnapshot(client, repository, pullRequest, requirements, signal));
-        for (const snapshot of snapshots) {
+        const configured = repository.mode !== "generic-check-runs";
+        const generic = repository.mode !== "configured-tools";
+        const ciEnabled = generic
+            && !options.disabledCiRepositories?.has(repositoryName);
+        const configuredRequirements = deriveSnapshotRequirements(options.config.triggers);
+        const snapshots = await mapConcurrent(pullRequests, 4, async (pullRequest) => {
+            const configuredSnapshot = configured
+                ? await loadPrSnapshot(client, repositoryName, pullRequest, configuredRequirements, signal)
+                : undefined;
+            const genericSnapshot = ciEnabled && (!options.discover || !configured)
+                ? await loadPrSnapshot(client, repositoryName, pullRequest, { checkRuns: "current", reviews: false }, signal)
+                : undefined;
+            return { configuredSnapshot, genericSnapshot };
+        });
+        for (const { configuredSnapshot, genericSnapshot } of snapshots) {
             if (options.discover) {
-                for (const identity of discoveryIdentities(snapshot))
-                    options.onDiscovery?.({ repository: snapshot.repository.fullName, pullRequest: snapshot.pullRequest.number, ...identity });
+                const discoverySnapshot = configuredSnapshot ?? genericSnapshot;
+                if (discoverySnapshot !== undefined) {
+                    for (const identity of discoveryIdentities(discoverySnapshot)) {
+                        options.onDiscovery?.({
+                            repository: discoverySnapshot.repository.fullName,
+                            pullRequest: discoverySnapshot.pullRequest.number,
+                            ...identity,
+                        });
+                    }
+                }
+                if (configuredSnapshot === undefined)
+                    continue;
             }
-            const recognizedByTrigger = new Map();
-            const erroredTriggers = new Set();
-            for (const trigger of options.config.triggers) {
-                if (options.disabledTriggers?.has(trigger.id))
-                    continue;
-                const configuredRecognizers = options.recognizers ?? {};
-                const recognizer = configuredRecognizers[trigger.recognizer] ?? recognizers[trigger.recognizer];
-                let candidates;
-                try {
-                    candidates = recognizer(snapshot, trigger);
-                    recognizedByTrigger.set(trigger.id, [...candidates]);
-                }
-                catch (error) {
-                    erroredTriggers.add(trigger.id);
-                    summary.errors.push(`recognizer ${trigger.id}: ${errorText(error)}`);
-                    continue;
-                }
-                for (const candidate of candidates) {
-                    summary.candidates += 1;
-                    logCandidate(options.log, snapshot, candidate, "recognized");
-                    if (options.discover || options.emitter === undefined)
+            if (configuredSnapshot !== undefined) {
+                const snapshot = configuredSnapshot;
+                const recognizedByTrigger = new Map();
+                const erroredTriggers = new Set();
+                for (const trigger of options.config.triggers) {
+                    if (options.disabledTriggers?.has(trigger.id))
                         continue;
+                    const configuredRecognizers = options.recognizers ?? {};
+                    const recognizer = configuredRecognizers[trigger.recognizer] ?? recognizers[trigger.recognizer];
+                    let candidates;
+                    try {
+                        candidates = recognizer(snapshot, trigger);
+                        recognizedByTrigger.set(trigger.id, [...candidates]);
+                    }
+                    catch (error) {
+                        erroredTriggers.add(trigger.id);
+                        summary.errors.push(`recognizer ${trigger.id}: ${errorText(error)}`);
+                        continue;
+                    }
+                    for (const candidate of candidates) {
+                        summary.candidates += 1;
+                        logCandidate(options.log, snapshot, candidate, "recognized");
+                        if (options.discover || options.emitter === undefined)
+                            continue;
+                        try {
+                            const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify, verifySignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
+                            const current = await verifyHead({ repository: repositoryName, pullRequestNumber: candidate.pullRequestNumber, artifactHeadSha: candidate.artifactHeadSha }, signal);
+                            if (!current) {
+                                summary.stale += 1;
+                                logCandidate(options.log, snapshot, candidate, "stale");
+                                continue;
+                            }
+                            const result = await options.emitter.emit(trigger, snapshot, candidate, signal);
+                            if (result === "emitted")
+                                summary.emitted += 1;
+                            else
+                                summary.replayed += 1;
+                            logCandidate(options.log, snapshot, candidate, result);
+                        }
+                        catch (error) {
+                            if (isAuthFailure(error) || isTransient(error))
+                                throw error;
+                            if (isFatalRelayFailure(error)) {
+                                onFatal(error);
+                                throw error;
+                            }
+                            if (isAbort(error, signal))
+                                throw error;
+                            erroredTriggers.add(trigger.id);
+                            if (error instanceof GitHubRelayEmitterError && (error.code === "trigger_drift" || error.code === "trigger_invalid")) {
+                                options.disabledTriggers?.add(trigger.id);
+                                summary.errors.push(`${error.code}: ${errorText(error)}`);
+                                logCandidate(options.log, snapshot, candidate, "error");
+                                break;
+                            }
+                            summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
+                            logCandidate(options.log, snapshot, candidate, "error");
+                        }
+                    }
+                }
+                const aggregate = options.config.aggregate;
+                const aggregateCandidates = options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []);
+                const aggregateReady = aggregate !== undefined
+                    && !options.discover
+                    && options.emitter !== undefined
+                    && !options.disabledAggregates?.has(aggregate.id)
+                    && options.config.triggers.every((trigger) => !options.disabledTriggers?.has(trigger.id)
+                        && !erroredTriggers.has(trigger.id)
+                        && (recognizedByTrigger.get(trigger.id)?.length ?? 0) > 0);
+                if (aggregateReady) {
                     try {
                         const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify, verifySignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
-                        const current = await verifyHead({ repository, pullRequestNumber: candidate.pullRequestNumber, artifactHeadSha: candidate.artifactHeadSha }, signal);
-                        if (!current) {
-                            summary.stale += 1;
-                            logCandidate(options.log, snapshot, candidate, "stale");
-                            continue;
+                        const current = await verifyHead({
+                            repository: repositoryName,
+                            pullRequestNumber: snapshot.pullRequest.number,
+                            artifactHeadSha: snapshot.pullRequest.headSha,
+                        }, signal);
+                        if (current) {
+                            const result = await options.emitter.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
+                            if (result === "emitted")
+                                summary.emitted += 1;
+                            else
+                                summary.replayed += 1;
                         }
-                        const result = await options.emitter.emit(trigger, snapshot, candidate, signal);
-                        if (result === "emitted")
-                            summary.emitted += 1;
-                        else
-                            summary.replayed += 1;
-                        logCandidate(options.log, snapshot, candidate, result);
                     }
                     catch (error) {
                         if (isAuthFailure(error) || isTransient(error))
@@ -191,59 +273,87 @@ async function runRepository(options, client, repository, summary, states, signa
                         }
                         if (isAbort(error, signal))
                             throw error;
-                        erroredTriggers.add(trigger.id);
-                        if (error instanceof GitHubRelayEmitterError && (error.code === "trigger_drift" || error.code === "trigger_invalid")) {
-                            options.disabledTriggers?.add(trigger.id);
+                        if (error instanceof GitHubRelayEmitterError && (error.code === "aggregate_drift" || error.code === "aggregate_invalid")) {
+                            options.disabledAggregates?.add(aggregate.id);
                             summary.errors.push(`${error.code}: ${errorText(error)}`);
-                            logCandidate(options.log, snapshot, candidate, "error");
-                            break;
                         }
-                        summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
-                        logCandidate(options.log, snapshot, candidate, "error");
+                        else {
+                            summary.errors.push(`aggregate ${aggregate.id}: ${errorText(error)}`);
+                        }
                     }
                 }
             }
-            const aggregate = options.config.aggregate;
-            const aggregateCandidates = options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []);
-            const aggregateReady = aggregate !== undefined
-                && !options.discover
-                && options.emitter !== undefined
-                && !options.disabledAggregates?.has(aggregate.id)
-                && options.config.triggers.every((trigger) => !options.disabledTriggers?.has(trigger.id)
-                    && !erroredTriggers.has(trigger.id)
-                    && (recognizedByTrigger.get(trigger.id)?.length ?? 0) > 0);
-            if (aggregateReady) {
-                try {
-                    const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify, verifySignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
-                    const current = await verifyHead({
-                        repository,
-                        pullRequestNumber: snapshot.pullRequest.number,
-                        artifactHeadSha: snapshot.pullRequest.headSha,
-                    }, signal);
-                    if (!current)
-                        continue;
-                    const result = await options.emitter.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
-                    if (result === "emitted")
-                        summary.emitted += 1;
-                    else
-                        summary.replayed += 1;
+            if (genericSnapshot === undefined)
+                continue;
+            const snapshot = genericSnapshot;
+            const checks = settledCheckRuns(snapshot);
+            if (checks === undefined) {
+                state.ciObservations.delete(snapshot.pullRequest.number);
+                continue;
+            }
+            summary.candidates += checks.length;
+            const identity = ciSettledKey(normalizeCiSettled(snapshot, checks));
+            const previous = state.ciObservations.get(snapshot.pullRequest.number);
+            const observation = previous === undefined || previous.headSha !== snapshot.pullRequest.headSha
+                ? { headSha: snapshot.pullRequest.headSha, identity, consecutive: 1, emittedIdentities: new Set() }
+                : previous;
+            if (observation !== previous) {
+                state.ciObservations.set(snapshot.pullRequest.number, observation);
+            }
+            else if (observation.identity !== identity) {
+                observation.identity = identity;
+                observation.consecutive = 1;
+            }
+            else {
+                observation.consecutive += 1;
+            }
+            if (options.emitter === undefined
+                || (!options.once && observation.consecutive < 2)
+                || observation.emittedIdentities.has(identity))
+                continue;
+            const verifyHead = options.headVerifier
+                ?? options.verifyCurrentHead
+                ?? ((candidate, verifySignal) => verifyCurrentHead(client, candidate, verifySignal));
+            try {
+                const current = await verifyHead({
+                    repository: repositoryName,
+                    pullRequestNumber: snapshot.pullRequest.number,
+                    artifactHeadSha: snapshot.pullRequest.headSha,
+                }, signal);
+                if (!current) {
+                    state.ciObservations.delete(snapshot.pullRequest.number);
+                    summary.stale += 1;
+                    continue;
                 }
-                catch (error) {
-                    if (isAuthFailure(error) || isTransient(error))
-                        throw error;
-                    if (isFatalRelayFailure(error)) {
-                        onFatal(error);
-                        throw error;
-                    }
-                    if (isAbort(error, signal))
-                        throw error;
-                    if (error instanceof GitHubRelayEmitterError && (error.code === "aggregate_drift" || error.code === "aggregate_invalid")) {
-                        options.disabledAggregates?.add(aggregate.id);
-                        summary.errors.push(`${error.code}: ${errorText(error)}`);
-                        continue;
-                    }
-                    summary.errors.push(`aggregate ${aggregate.id}: ${errorText(error)}`);
+                const result = await options.emitter.emitCiSettled(snapshot, checks, signal);
+                if (result === "emitted")
+                    summary.emitted += 1;
+                else
+                    summary.replayed += 1;
+                observation.emittedIdentities.add(identity);
+            }
+            catch (error) {
+                if (isAuthFailure(error) || isTransient(error))
+                    throw error;
+                if (isFatalRelayFailure(error)) {
+                    onFatal(error);
+                    throw error;
                 }
+                if (isAbort(error, signal))
+                    throw error;
+                if (error instanceof GitHubRelayEmitterError && (error.code === "ci_drift" || error.code === "ci_invalid")) {
+                    options.disabledCiRepositories?.add(repositoryName);
+                    summary.errors.push(`${error.code}: ${errorText(error)}`);
+                    continue;
+                }
+                summary.errors.push(`emission ci ${snapshot.pullRequest.number}: ${errorText(error)}`);
+            }
+        }
+        if (generic && !options.discover) {
+            const returned = new Set(pullRequests.map((pullRequest) => pullRequest.number));
+            for (const number of state.ciObservations.keys()) {
+                if (!returned.has(number))
+                    state.ciObservations.delete(number);
             }
         }
     }
@@ -256,16 +366,16 @@ async function runRepository(options, client, repository, summary, states, signa
             return;
         if (isNotFound(error)) {
             state.disabled = true;
-            summary.errors.push(`repository ${repository}: not found`);
+            summary.errors.push(`repository ${repositoryName}: not found`);
             return;
         }
         if (isTransient(error)) {
             state.transientDelay = state.transientDelay === 0 ? options.config.pollIntervalMs : Math.min(options.config.pollIntervalMs * 8, state.transientDelay * 2);
             state.nextEligibleAt = now() + state.transientDelay;
-            summary.errors.push(`repository ${repository}: ${errorText(error)}`);
+            summary.errors.push(`repository ${repositoryName}: ${errorText(error)}`);
             return;
         }
-        summary.errors.push(`repository ${repository}: ${errorText(error)}`);
+        summary.errors.push(`repository ${repositoryName}: ${errorText(error)}`);
     }
 }
 function validatePullRequestSelection(config, pullRequestNumber) {
@@ -296,6 +406,7 @@ export async function runGitHubCycle(options) {
         ...options,
         disabledTriggers: options.disabledTriggers ?? new Set(),
         disabledAggregates: options.disabledAggregates ?? new Set(),
+        disabledCiRepositories: options.disabledCiRepositories ?? new Set(),
     };
     let fatal;
     const onFatal = (error) => {
@@ -329,6 +440,7 @@ export async function runGitHubConnector(options) {
     const total = emptySummary(options.config.repositories.length);
     const disabledTriggers = options.disabledTriggers ?? new Set();
     const disabledAggregates = options.disabledAggregates ?? new Set();
+    const disabledCiRepositories = options.disabledCiRepositories ?? new Set();
     const merge = (summary) => {
         total.pullRequests += summary.pullRequests;
         total.candidates += summary.candidates;
@@ -338,7 +450,7 @@ export async function runGitHubConnector(options) {
         total.errors.push(...summary.errors);
     };
     do {
-        const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers, disabledAggregates });
+        const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers, disabledAggregates, disabledCiRepositories });
         merge(cycle);
         if (options.once || options.discover || signal.aborted)
             break;
