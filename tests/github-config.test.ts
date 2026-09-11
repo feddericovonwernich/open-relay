@@ -194,3 +194,21 @@ test("deep freezes normalized configuration", () => {
     config.repositories.push("other/repository");
   }, TypeError);
 });
+test("validates and freezes the optional aggregate mapping", () => {
+  const value = {
+    ...validConfig(),
+    aggregate: { id: "settled-v1", emit: { type: "pr.automation.settled", version: 1 } },
+  };
+  const config = validateGitHubConnectorConfig(value);
+  assert.deepEqual(config.aggregate, value.aggregate);
+  assert.equal(Object.isFrozen(config.aggregate), true);
+  assert.equal(Object.isFrozen(config.aggregate?.emit), true);
+});
+
+test("rejects aggregate IDs that collide with triggers or secret-like aggregate keys", () => {
+  const collision = { ...validConfig(), aggregate: { id: "sonar-v1", emit: { type: "settled", version: 1 } } };
+  assert.throws(() => validateGitHubConnectorConfig(collision), errorWithCode("aggregate_id_duplicate"));
+
+  const secret = { ...validConfig(), aggregate: { id: "settled-v1", emit: { type: "settled", version: 1 }, secret: "nope" } };
+  assert.throws(() => validateGitHubConnectorConfig(secret), errorWithCode("secret_key"));
+});

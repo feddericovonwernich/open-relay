@@ -17,7 +17,7 @@ export interface ConnectorSummary {
 }
 
 type Client = Pick<GitHubClient, "listOpenPullRequests" | "listRecentClosedPullRequests" | "listCompletedCheckRuns" | "listReviews" | "getPullRequest">;
-type Emitter = Pick<GitHubRelayEmitter, "emit">;
+type Emitter = Pick<GitHubRelayEmitter, "emit" | "emitAggregate">;
 type Sleep = (milliseconds: number, signal: AbortSignal) => Promise<void>;
 type Log = (value: string) => void;
 type HeadVerifier = (candidate: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, signal?: AbortSignal) => Promise<boolean>;
@@ -71,8 +71,8 @@ export interface GitHubCycleOptions {
   onDiscovery?: (identity: Record<string, unknown>) => void;
   discover?: boolean;
   pullRequestNumber?: number;
-  state?: Map<string, RepositoryState>;
   disabledTriggers?: Set<string>;
+  disabledAggregates?: Set<string>;
   headVerifier?: HeadVerifier;
   verifyCurrentHead?: HeadVerifier;
   recognizers?: Partial<Record<RecognizerId, Recognizer>>;
@@ -208,6 +208,8 @@ async function runRepository(
       if (options.discover) {
         for (const identity of discoveryIdentities(snapshot)) options.onDiscovery?.({ repository: snapshot.repository.fullName, pullRequest: snapshot.pullRequest.number, ...identity });
       }
+      const recognizedByTrigger = new Map<string, CompletionCandidate[]>();
+      const erroredTriggers = new Set<string>();
       for (const trigger of options.config.triggers) {
         if (options.disabledTriggers?.has(trigger.id)) continue;
         const configuredRecognizers = options.recognizers ?? {};
@@ -215,7 +217,9 @@ async function runRepository(
         let candidates: readonly CompletionCandidate[];
         try {
           candidates = recognizer(snapshot, trigger as never);
+          recognizedByTrigger.set(trigger.id, [...candidates]);
         } catch (error) {
+          erroredTriggers.add(trigger.id);
           summary.errors.push(`recognizer ${trigger.id}: ${errorText(error)}`);
           continue;
         }
@@ -242,6 +246,7 @@ async function runRepository(
               throw error;
             }
             if (isAbort(error, signal)) throw error;
+            erroredTriggers.add(trigger.id);
             if (error instanceof GitHubRelayEmitterError && (error.code === "trigger_drift" || error.code === "trigger_invalid")) {
               options.disabledTriggers?.add(trigger.id);
               summary.errors.push(`${error.code}: ${errorText(error)}`);
@@ -251,6 +256,43 @@ async function runRepository(
             summary.errors.push(`emission ${candidate.artifactId}: ${errorText(error)}`);
             logCandidate(options.log, snapshot, candidate, "error");
           }
+        }
+      }
+      const aggregate = options.config.aggregate;
+      const aggregateCandidates = options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []);
+      const aggregateReady = aggregate !== undefined
+        && !options.discover
+        && options.emitter !== undefined
+        && !options.disabledAggregates?.has(aggregate.id)
+        && options.config.triggers.every((trigger) =>
+          !options.disabledTriggers?.has(trigger.id)
+          && !erroredTriggers.has(trigger.id)
+          && (recognizedByTrigger.get(trigger.id)?.length ?? 0) > 0);
+      if (aggregateReady) {
+        try {
+          const verifyHead = options.headVerifier ?? options.verifyCurrentHead ?? ((candidateToVerify: { repository: string; pullRequestNumber: number; artifactHeadSha: string }, verifySignal?: AbortSignal) => verifyCurrentHead(client, candidateToVerify, verifySignal));
+          const current = await verifyHead({
+            repository,
+            pullRequestNumber: snapshot.pullRequest.number,
+            artifactHeadSha: snapshot.pullRequest.headSha,
+          }, signal);
+          if (!current) continue;
+          const result = await options.emitter.emitAggregate(aggregate, snapshot, aggregateCandidates, signal);
+          if (result === "emitted") summary.emitted += 1;
+          else summary.replayed += 1;
+        } catch (error) {
+          if (isAuthFailure(error) || isTransient(error)) throw error;
+          if (isFatalRelayFailure(error)) {
+            onFatal(error);
+            throw error;
+          }
+          if (isAbort(error, signal)) throw error;
+          if (error instanceof GitHubRelayEmitterError && (error.code === "aggregate_drift" || error.code === "aggregate_invalid")) {
+            options.disabledAggregates?.add(aggregate.id);
+            summary.errors.push(`${error.code}: ${errorText(error)}`);
+            continue;
+          }
+          summary.errors.push(`aggregate ${aggregate.id}: ${errorText(error)}`);
         }
       }
     }
@@ -296,7 +338,11 @@ export async function runGitHubCycle(options: GitHubCycleOptions): Promise<Conne
   const states = options.state ?? new Map<string, RepositoryState>();
   const summary = emptySummary(options.config.repositories.length);
   const client = limitedClient(options.client, new RequestLimiter());
-  const cycleOptions = { ...options, disabledTriggers: options.disabledTriggers ?? new Set<string>() };
+  const cycleOptions = {
+    ...options,
+    disabledTriggers: options.disabledTriggers ?? new Set<string>(),
+    disabledAggregates: options.disabledAggregates ?? new Set<string>(),
+  };
   let fatal: unknown;
   const onFatal = (error: unknown): void => {
     if (fatal === undefined) fatal = error;
@@ -323,6 +369,7 @@ export async function runGitHubConnector(options: GitHubConnectorRunOptions): Pr
   const state = options.state ?? new Map<string, RepositoryState>();
   const total = emptySummary(options.config.repositories.length);
   const disabledTriggers = options.disabledTriggers ?? new Set<string>();
+  const disabledAggregates = options.disabledAggregates ?? new Set<string>();
   const merge = (summary: ConnectorSummary): void => {
     total.pullRequests += summary.pullRequests;
     total.candidates += summary.candidates;
@@ -332,8 +379,7 @@ export async function runGitHubConnector(options: GitHubConnectorRunOptions): Pr
     total.errors.push(...summary.errors);
   };
   do {
-    if (signal.aborted) break;
-    const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers });
+    const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers, disabledAggregates });
     merge(cycle);
     if (options.once || options.discover || signal.aborted) break;
     try { await sleep(options.config.pollIntervalMs, signal); } catch (error) { if (!isAbort(error, signal)) throw error; break; }

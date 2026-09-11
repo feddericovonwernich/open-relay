@@ -9,6 +9,10 @@ export interface GitHubConnectorConfig {
   lookbackHours: number;
   repositories: string[];
   triggers: TriggerConfig[];
+  aggregate?: {
+    id: string;
+    emit: { type: string; version: number };
+  };
 }
 
 export type TriggerConfig =
@@ -117,4 +121,23 @@ export interface PrAutomationCompleted {
     completedAt: string;
     detailsUrl: string | null;
   };
+}
+export interface PrAutomationSettledArtifact {
+  triggerId: string;
+  provider: string;
+  kind: "check_run" | "pull_request_review";
+  id: string;
+  name: string;
+  completion: "completed" | "submitted";
+  conclusion: string | null;
+  completedAt: string;
+  detailsUrl: string | null;
+}
+
+export interface PrAutomationSettled {
+  schemaVersion: 1;
+  provider: "github";
+  repository: { id: number; fullName: string };
+  pullRequest: { number: number; url: string; headSha: string; baseRef: string };
+  artifacts: PrAutomationSettledArtifact[];
 }

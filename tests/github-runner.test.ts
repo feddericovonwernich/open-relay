@@ -3,7 +3,7 @@ import test from "node:test";
 import { runGitHubConnector, runGitHubCycle, type ConnectorSummary } from "../src/connectors/github/runner.ts";
 import { GitHubRelayEmitterError } from "../src/connectors/github/emitter.ts";
 import { GitHubClientError } from "../src/connectors/github/client.ts";
-import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot, CompletionCandidate } from "../src/connectors/github/types.ts";
+import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot, CompletionCandidate, TriggerConfig } from "../src/connectors/github/types.ts";
 
 const trigger = {
   id: "sonar-v1",
@@ -20,6 +20,17 @@ const config: GitHubConnectorConfig = {
   lookbackHours: 24,
   repositories: ["octo/repo"],
   triggers: [trigger],
+};
+const aggregateTrigger: TriggerConfig = {
+  id: "bugbot-v1",
+  recognizer: "cursor-bugbot",
+  match: { checkNames: ["Cursor Bugbot"], appIds: [43], appSlugs: [] },
+  emit: { type: "pr.automation.completed", version: 1 },
+};
+const aggregateConfig: GitHubConnectorConfig = {
+  ...config,
+  triggers: [trigger, aggregateTrigger],
+  aggregate: { id: "settled-v1", emit: { type: "pr.automation.settled", version: 1 } },
 };
 const pullRequest: GitHubPullRequest = {
   number: 7,
@@ -57,7 +68,7 @@ test("one-shot runner recognizes and emits a current candidate", async () => {
   const result = await runGitHubConnector({
     config,
     client: clientFor(),
-    emitter: { emit: async (...args) => { calls.push(args); return "emitted"; } },
+    emitter: { emit: async (...args) => { calls.push(args); return "emitted"; }, emitAggregate: async () => "emitted" },
     once: true,
     clock: () => Date.now(),
   });
@@ -104,7 +115,7 @@ test("stale candidates are counted but never emitted", async () => {
   const result = await runGitHubCycle({
     config,
     client: clientFor("new-head"),
-    emitter: { emit: async () => { emitted = true; return "emitted"; } },
+    emitter: { emit: async () => { emitted = true; return "emitted"; }, emitAggregate: async () => "emitted" },
   });
   assert.deepEqual(result, summary({ pullRequests: 1, candidates: 1, stale: 1 }));
   assert.equal(emitted, false);
@@ -139,6 +150,7 @@ test("trigger drift disables only that trigger for later cycles", async () => {
         emissions += 1;
         throw new GitHubRelayEmitterError("trigger_drift", "drift");
       },
+      emitAggregate: async () => "emitted",
     },
     sleep: async () => {
       sleeps += 1;
@@ -162,6 +174,10 @@ function candidate(id: string): CompletionCandidate {
     artifactHeadSha: "abc",
     artifact: { name: "Sonar", completion: "completed", conclusion: "success", completedAt: new Date().toISOString(), detailsUrl: null },
   };
+}
+
+function candidateFor(triggerId: string, artifactId: string, provider = "sonarqube"): CompletionCandidate {
+  return { ...candidate(artifactId), triggerId, provider, artifact: { ...candidate(artifactId).artifact, name: provider } };
 }
 
 test("all GitHub requests share a global concurrency ceiling of four", async () => {
@@ -229,7 +245,7 @@ test("Relay credential rejection is fatal", async () => {
   await assert.rejects(runGitHubCycle({
     config,
     client: clientFor(),
-    emitter: { emit: async () => { throw new GitHubRelayEmitterError("credential_failed", "runtime rejected", 401); } },
+    emitter: { emit: async () => { throw new GitHubRelayEmitterError("credential_failed", "runtime rejected", 401); }, emitAggregate: async () => "emitted" },
   }), /runtime rejected/);
 });
 
@@ -265,7 +281,7 @@ test("head verification transient failure enters repository backoff", async () =
     client: clientFor(),
     state,
     now: () => 0,
-    emitter: { emit: async () => "emitted" },
+    emitter: { emit: async () => "emitted", emitAggregate: async () => "emitted" },
     verifyCurrentHead: async () => { throw new GitHubClientError("github_transient_error", "head unavailable"); },
   });
   assert.equal(result.emitted, 0);
@@ -278,7 +294,7 @@ test("trigger drift stops remaining candidates for that trigger", async () => {
     config,
     client: clientFor(),
     recognizers: { sonarqube: () => [candidate("one"), candidate("two")] },
-    emitter: { emit: async () => { emissions += 1; throw new GitHubRelayEmitterError("trigger_drift", "drift"); } },
+    emitter: { emit: async () => { emissions += 1; throw new GitHubRelayEmitterError("trigger_drift", "drift"); }, emitAggregate: async () => "emitted" },
   });
   assert.equal(emissions, 1);
   assert.equal(result.candidates, 1);
@@ -293,4 +309,27 @@ test("structured candidate logs include artifact kind", async () => {
     discover: true,
   });
   assert.equal(logs[0]?.["artifact.kind"], "check_run");
+});
+test("emits aggregate only after every trigger has a current-head candidate", async () => {
+  let settled = false;
+  const aggregates: CompletionCandidate[][] = [];
+  const emitter = {
+    emit: async () => "emitted" as const,
+    emitAggregate: async (_aggregate: unknown, _snapshot: PrSnapshot, candidates: readonly CompletionCandidate[]) => {
+      aggregates.push([...candidates]);
+      return "emitted" as const;
+    },
+  };
+  const recognizers = {
+    sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
+    "cursor-bugbot": () => settled ? [candidateFor("bugbot-v1", "bugbot-1", "cursor-bugbot")] : [],
+  };
+  const first = await runGitHubCycle({ config: aggregateConfig, client: clientFor(), emitter, recognizers });
+  assert.equal(first.emitted, 1);
+  assert.equal(aggregates.length, 0);
+  settled = true;
+  const second = await runGitHubCycle({ config: aggregateConfig, client: clientFor(), emitter, recognizers });
+  assert.equal(second.emitted, 3);
+  assert.equal(aggregates.length, 1);
+  assert.deepEqual(aggregates[0]?.map((entry) => entry.triggerId), ["sonar-v1", "bugbot-v1"]);
 });
