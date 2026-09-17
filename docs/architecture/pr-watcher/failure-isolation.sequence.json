@@ -1,0 +1,288 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Verification Failure Isolation and Retry",
+    "output": "failure-isolation.sequence.html",
+    "viewBox": [
+      1550,
+      770
+    ],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "graphql-failure",
+        "label": "GraphQL failure",
+        "focus": [
+          "github-rest",
+          "github-graphql",
+          "connector",
+          "relay"
+        ],
+        "note": "Low-level events continue; incomplete review evidence never becomes zero findings."
+      },
+      {
+        "id": "relay-retry",
+        "label": "Relay retry",
+        "focus": [
+          "connector",
+          "analyzer",
+          "relay"
+        ],
+        "note": "Ordinary Relay unavailability retains an eligible identity for later retry."
+      },
+      {
+        "id": "head-drift",
+        "label": "Head drift",
+        "focus": [
+          "github-rest",
+          "connector",
+          "relay"
+        ],
+        "note": "A final-head mismatch deletes the observation and suppresses stale notification."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "github-rest",
+      "type": "external",
+      "label": "GitHub REST"
+    },
+    {
+      "id": "github-graphql",
+      "type": "external",
+      "label": "GitHub GraphQL"
+    },
+    {
+      "id": "connector",
+      "type": "backend",
+      "label": "GitHub Connector"
+    },
+    {
+      "id": "analyzer",
+      "type": "backend",
+      "label": "Heuristics"
+    },
+    {
+      "id": "relay",
+      "type": "database",
+      "label": "Relay"
+    },
+    {
+      "id": "supervisor",
+      "type": "cloud",
+      "label": "Supervisor / Logs"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 320,
+      "label": "GraphQL evidence unavailable"
+    },
+    {
+      "from": 325,
+      "to": 575,
+      "label": "Stable event retries after Relay outage"
+    },
+    {
+      "from": 580,
+      "to": 680,
+      "label": "Final head drift"
+    }
+  ],
+  "messages": [
+    {
+      "id": "load-low-level",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 165,
+      "label": "load configured artifacts + terminal checks",
+      "variant": "default"
+    },
+    {
+      "id": "low-level-facts",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 193,
+      "label": "eligible low-level facts",
+      "variant": "return"
+    },
+    {
+      "id": "emit-existing",
+      "from": "connector",
+      "to": "relay",
+      "y": 221,
+      "label": "emit existing automation and CI events",
+      "variant": "dashed"
+    },
+    {
+      "id": "query-threads-fail",
+      "from": "connector",
+      "to": "github-graphql",
+      "y": 249,
+      "label": "query reviewThreads",
+      "variant": "security"
+    },
+    {
+      "id": "graphql-error",
+      "from": "github-graphql",
+      "to": "connector",
+      "y": 277,
+      "label": "rate-limit or transient error",
+      "variant": "return"
+    },
+    {
+      "id": "log-graphql",
+      "from": "connector",
+      "to": "supervisor",
+      "y": 305,
+      "label": "verification_error; unified event silent",
+      "variant": "dashed"
+    },
+    {
+      "id": "reload-complete",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 333,
+      "label": "next cycle: reload current facts",
+      "variant": "default"
+    },
+    {
+      "id": "query-threads-ok",
+      "from": "connector",
+      "to": "github-graphql",
+      "y": 361,
+      "label": "reviewThreads succeeds",
+      "variant": "security"
+    },
+    {
+      "id": "analyze-stable",
+      "from": "connector",
+      "to": "analyzer",
+      "y": 389,
+      "label": "eligible stable identity",
+      "variant": "emphasis"
+    },
+    {
+      "id": "post-unavailable",
+      "from": "connector",
+      "to": "relay",
+      "y": 417,
+      "label": "POST unified notification",
+      "variant": "emphasis"
+    },
+    {
+      "id": "relay-down",
+      "from": "relay",
+      "to": "connector",
+      "y": 445,
+      "label": "relay_unavailable",
+      "variant": "return"
+    },
+    {
+      "id": "retain-identity",
+      "from": "connector",
+      "to": "supervisor",
+      "y": 473,
+      "label": "retain eligible identity for retry",
+      "variant": "dashed"
+    },
+    {
+      "id": "retry-head",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 501,
+      "label": "retry cycle + final head fence",
+      "variant": "security"
+    },
+    {
+      "id": "retry-post",
+      "from": "connector",
+      "to": "relay",
+      "y": 529,
+      "label": "POST same deterministic key",
+      "variant": "emphasis"
+    },
+    {
+      "id": "retry-created",
+      "from": "relay",
+      "to": "connector",
+      "y": 557,
+      "label": "201 emitted or 200 replayed",
+      "variant": "return"
+    },
+    {
+      "id": "new-observation",
+      "from": "connector",
+      "to": "analyzer",
+      "y": 585,
+      "label": "later evidence reaches stability",
+      "variant": "default"
+    },
+    {
+      "id": "drift-fence",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 613,
+      "label": "verify snapshot head",
+      "variant": "security"
+    },
+    {
+      "id": "head-changed",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 641,
+      "label": "pull request head changed",
+      "variant": "return"
+    },
+    {
+      "id": "delete-observation",
+      "from": "connector",
+      "to": "supervisor",
+      "y": 669,
+      "label": "delete stale observation; emit nothing",
+      "variant": "dashed"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "connector",
+      "from": 160,
+      "to": 677,
+      "type": "backend"
+    },
+    {
+      "participant": "github-rest",
+      "from": 160,
+      "to": 649,
+      "type": "external"
+    },
+    {
+      "participant": "github-graphql",
+      "from": 244,
+      "to": 369,
+      "type": "external"
+    },
+    {
+      "participant": "analyzer",
+      "from": 384,
+      "to": 593,
+      "type": "backend"
+    },
+    {
+      "participant": "relay",
+      "from": 216,
+      "to": 565,
+      "type": "database"
+    },
+    {
+      "participant": "supervisor",
+      "from": 300,
+      "to": 677,
+      "type": "cloud"
+    }
+  ]
+}

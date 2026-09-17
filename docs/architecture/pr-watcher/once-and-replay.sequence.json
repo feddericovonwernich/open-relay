@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "One-shot Reconciliation and Deterministic Replay",
+    "output": "once-and-replay.sequence.html",
+    "viewBox": [1600, 740],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "first-once",
+        "label": "First one-shot run",
+        "focus": ["operator", "connector", "github-rest", "github-graphql", "analyzer", "relay"],
+        "note": "One eligible terminal snapshot bypasses only the two-cycle delay and creates the deterministic event."
+      },
+      {
+        "id": "fresh-replay",
+        "label": "Fresh-state replay",
+        "focus": ["operator", "connector", "analyzer", "relay"],
+        "note": "A restarted connector derives the same payload hash and Relay returns the existing event."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "operator", "type": "external", "label": "Operator" },
+    { "id": "connector", "type": "backend", "label": "GitHub Connector" },
+    { "id": "github-rest", "type": "external", "label": "GitHub REST" },
+    { "id": "github-graphql", "type": "external", "label": "GitHub GraphQL" },
+    { "id": "analyzer", "type": "backend", "label": "Heuristics" },
+    { "id": "relay", "type": "database", "label": "Relay" }
+  ],
+  "segments": [
+    { "from": 150, "to": 420, "label": "First --once invocation" },
+    { "from": 430, "to": 630, "label": "Fresh connector state, same evidence" }
+  ],
+  "messages": [
+    { "id": "run-once", "from": "operator", "to": "connector", "y": 165, "label": "relay connect github --once", "variant": "emphasis" },
+    { "id": "load-once", "from": "connector", "to": "github-rest", "y": 200, "label": "load artifacts + terminal checks", "variant": "default" },
+    { "id": "facts-once", "from": "github-rest", "to": "connector", "y": 230, "label": "eligible current-head facts", "variant": "return" },
+    { "id": "threads-once", "from": "connector", "to": "github-graphql", "y": 260, "label": "query reviewThreads", "variant": "security" },
+    { "id": "review-facts-once", "from": "github-graphql", "to": "connector", "y": 290, "label": "authoritative review evidence", "variant": "return" },
+    { "id": "analyze-once", "from": "connector", "to": "analyzer", "y": 320, "label": "normalize + hash payload", "variant": "emphasis" },
+    { "id": "head-fence-once", "from": "connector", "to": "github-rest", "y": 350, "label": "verify current head", "variant": "security" },
+    { "id": "create-event", "from": "connector", "to": "relay", "y": 380, "label": "POST deterministic idempotency key", "variant": "emphasis" },
+    { "id": "created", "from": "relay", "to": "connector", "y": 410, "label": "201 emitted", "variant": "return" },
+    { "id": "restart-once", "from": "operator", "to": "connector", "y": 435, "label": "fresh process: --once", "variant": "default" },
+    { "id": "reload-facts", "from": "connector", "to": "github-rest", "y": 465, "label": "reload same evidence", "variant": "default" },
+    { "id": "reload-review", "from": "connector", "to": "github-graphql", "y": 495, "label": "reload same review threads", "variant": "security" },
+    { "id": "rehash", "from": "connector", "to": "analyzer", "y": 525, "label": "derive identical payload hash", "variant": "emphasis" },
+    { "id": "post-replay", "from": "connector", "to": "relay", "y": 555, "label": "POST same idempotency key", "variant": "emphasis" },
+    { "id": "replayed", "from": "relay", "to": "connector", "y": 585, "label": "200 replayed; no duplicate", "variant": "return" },
+    { "id": "summary", "from": "connector", "to": "operator", "y": 610, "label": "summary: replayed = 1", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "connector", "from": 160, "to": 618, "type": "backend" },
+    { "participant": "github-rest", "from": 195, "to": 475, "type": "external" },
+    { "participant": "github-graphql", "from": 255, "to": 505, "type": "external" },
+    { "participant": "analyzer", "from": 315, "to": 537, "type": "backend" },
+    { "participant": "relay", "from": 375, "to": 595, "type": "database" }
+  ]
+}

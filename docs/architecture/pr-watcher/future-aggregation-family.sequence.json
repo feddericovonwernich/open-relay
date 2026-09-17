@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Future Relay Aggregation Family",
+    "output": "future-aggregation-family.sequence.html",
+    "viewBox": [1700, 800],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "reduce-events",
+        "label": "Reduce correlated inputs",
+        "focus": ["producers", "relay-log", "family", "family-state"],
+        "note": "A future typed reducer consumes immutable low-level events by correlation ID and persists projection state."
+      },
+      {
+        "id": "emit-notification",
+        "label": "Emit notification definition",
+        "focus": ["family", "family-state", "relay-log", "notify", "agent"],
+        "note": "Once the family policy is settled, deterministic output uses the same notification delivery path."
+      },
+      {
+        "id": "recover-projection",
+        "label": "Recover projection",
+        "focus": ["relay-log", "family", "family-state"],
+        "note": "Restart recovery replays after the durable cursor and converges on the same output identity."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "producers", "type": "external", "label": "Event Producers" },
+    { "id": "relay-log", "type": "database", "label": "Relay Update Log" },
+    { "id": "family", "type": "backend", "label": "Aggregation Family" },
+    { "id": "family-state", "type": "database", "label": "Projection State" },
+    { "id": "notification", "type": "messagebus", "label": "Notification Event" },
+    { "id": "notify", "type": "frontend", "label": "relay notify" },
+    { "id": "agent", "type": "external", "label": "Coding Agent" }
+  ],
+  "segments": [
+    { "from": 150, "to": 395, "label": "Typed reduction by correlation" },
+    { "from": 405, "to": 610, "label": "Settled deterministic output" },
+    { "from": 620, "to": 725, "label": "Restart recovery" }
+  ],
+  "messages": [
+    { "id": "append-first", "from": "producers", "to": "relay-log", "y": 165, "label": "append low-level event A", "variant": "default" },
+    { "id": "read-first", "from": "relay-log", "to": "family", "y": 200, "label": "definition-filtered update + correlation", "variant": "emphasis" },
+    { "id": "reduce-first", "from": "family", "to": "family-state", "y": 235, "label": "reduce state; persist cursor", "variant": "security" },
+    { "id": "state-pending", "from": "family-state", "to": "family", "y": 270, "label": "settled = false", "variant": "return" },
+    { "id": "append-second", "from": "producers", "to": "relay-log", "y": 310, "label": "append low-level event B", "variant": "default" },
+    { "id": "read-second", "from": "relay-log", "to": "family", "y": 345, "label": "next correlated update", "variant": "emphasis" },
+    { "id": "reduce-second", "from": "family", "to": "family-state", "y": 380, "label": "reduce state; persist cursor", "variant": "security" },
+    { "id": "state-settled", "from": "family-state", "to": "family", "y": 420, "label": "settled = true", "variant": "return" },
+    { "id": "emit-output", "from": "family", "to": "notification", "y": 490, "label": "emit deterministic notification identity", "variant": "emphasis" },
+    { "id": "persist-output", "from": "notification", "to": "relay-log", "y": 525, "label": "accept immutable output event", "variant": "security" },
+    { "id": "claim-output", "from": "relay-log", "to": "notify", "y": 560, "label": "single-consumer notification lease", "variant": "emphasis" },
+    { "id": "deliver-output", "from": "notify", "to": "agent", "y": 595, "label": "print analyzed payload", "variant": "emphasis" },
+    { "id": "restart-family", "from": "family-state", "to": "family", "y": 635, "label": "restart with durable cursor", "variant": "default" },
+    { "id": "replay-tail", "from": "relay-log", "to": "family", "y": 670, "label": "replay updates after cursor", "variant": "default" },
+    { "id": "converge", "from": "family", "to": "family-state", "y": 705, "label": "converge; do not duplicate output", "variant": "security" }
+  ],
+  "activations": [
+    { "participant": "relay-log", "from": 160, "to": 680, "type": "database" },
+    { "participant": "family", "from": 195, "to": 715, "type": "backend" },
+    { "participant": "family-state", "from": 230, "to": 715, "type": "database" },
+    { "participant": "notification", "from": 485, "to": 535, "type": "messagebus" },
+    { "participant": "notify", "from": 555, "to": 605, "type": "frontend" }
+  ]
+}

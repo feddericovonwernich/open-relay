@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Continuous Settlement with Successful Verdict",
+    "output": "continuous-success.sequence.html",
+    "viewBox": [1160, 700],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "first-observation",
+        "label": "First observation",
+        "focus": ["github-rest", "github-graphql", "connector", "analyzer"],
+        "note": "All checks pass and no configured provider thread is unresolved, but stability still requires a second observation."
+      },
+      {
+        "id": "success-emission",
+        "label": "Success emission",
+        "focus": ["connector", "analyzer", "relay", "notify", "agent"],
+        "note": "The stable payload has verdict success and an empty actions array."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "github-rest", "type": "external", "label": "GitHub REST" },
+    { "id": "github-graphql", "type": "external", "label": "GitHub GraphQL" },
+    { "id": "connector", "type": "backend", "label": "GitHub Connector" },
+    { "id": "analyzer", "type": "backend", "label": "Heuristics" },
+    { "id": "relay", "type": "database", "label": "Relay" },
+    { "id": "notify", "type": "frontend", "label": "relay notify" },
+    { "id": "agent", "type": "external", "label": "Coding Agent" }
+  ],
+  "segments": [
+    { "from": 150, "to": 345, "label": "Observation 1" },
+    { "from": 355, "to": 620, "label": "Observation 2 and delivery" }
+  ],
+  "messages": [
+    { "id": "load-first", "from": "connector", "to": "github-rest", "y": 165, "label": "load configured artifacts + terminal checks", "variant": "default" },
+    { "id": "passing-first", "from": "github-rest", "to": "connector", "y": 195, "label": "success, neutral, or skipped only", "variant": "return" },
+    { "id": "threads-first", "from": "connector", "to": "github-graphql", "y": 230, "label": "query reviewThreads", "variant": "security" },
+    { "id": "resolved-first", "from": "github-graphql", "to": "connector", "y": 260, "label": "zero unresolved configured threads", "variant": "return" },
+    { "id": "analyze-first", "from": "connector", "to": "analyzer", "y": 295, "label": "derive verdict and actions", "variant": "emphasis" },
+    { "id": "success-first", "from": "analyzer", "to": "connector", "y": 330, "label": "success; actions []; consecutive = 1", "variant": "return" },
+    { "id": "load-second", "from": "connector", "to": "github-rest", "y": 370, "label": "reload same current-head facts", "variant": "default" },
+    { "id": "passing-second", "from": "github-rest", "to": "connector", "y": 400, "label": "same passing checks", "variant": "return" },
+    { "id": "threads-second", "from": "connector", "to": "github-graphql", "y": 430, "label": "reload reviewThreads", "variant": "security" },
+    { "id": "resolved-second", "from": "github-graphql", "to": "connector", "y": 460, "label": "same resolved evidence", "variant": "return" },
+    { "id": "stable-success", "from": "connector", "to": "analyzer", "y": 490, "label": "same identity; consecutive = 2", "variant": "emphasis" },
+    { "id": "head-fence", "from": "connector", "to": "github-rest", "y": 525, "label": "verify current head", "variant": "security" },
+    { "id": "accept-success", "from": "connector", "to": "relay", "y": 560, "label": "accept success notification", "variant": "emphasis" },
+    { "id": "claim-success", "from": "relay", "to": "notify", "y": 575, "label": "single-consumer delivery", "variant": "emphasis" },
+    { "id": "print-success", "from": "notify", "to": "agent", "y": 615, "label": "verdict success; actions []", "variant": "emphasis" }
+  ],
+  "activations": [
+    { "participant": "connector", "from": 160, "to": 570, "type": "backend" },
+    { "participant": "github-rest", "from": 160, "to": 535, "type": "external" },
+    { "participant": "github-graphql", "from": 225, "to": 468, "type": "external" },
+    { "participant": "analyzer", "from": 290, "to": 503, "type": "backend" },
+    { "participant": "relay", "from": 555, "to": 598, "type": "database" },
+    { "participant": "notify", "from": 585, "to": 628, "type": "frontend" }
+  ]
+}

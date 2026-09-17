@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Review Resolution and Same-head Re-evaluation",
+    "output": "evidence-change.sequence.html",
+    "viewBox": [1600, 760],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "first-notification",
+        "label": "Initial action-required event",
+        "focus": ["relay", "notify", "agent"],
+        "note": "The first stable identity is delivered with actionable unresolved finding details."
+      },
+      {
+        "id": "remediation",
+        "label": "Agent remediation",
+        "focus": ["agent", "workspace", "github"],
+        "note": "The agent evaluates, fixes, replies, and resolves threads only after receiving the notification."
+      },
+      {
+        "id": "same-head-update",
+        "label": "Same-head update",
+        "focus": ["github", "connector", "analyzer", "relay", "notify", "agent"],
+        "note": "Resolved evidence changes the canonical identity and produces a distinct success notification after stability."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "github", "type": "external", "label": "GitHub" },
+    { "id": "connector", "type": "backend", "label": "GitHub Connector" },
+    { "id": "analyzer", "type": "backend", "label": "Heuristics" },
+    { "id": "relay", "type": "database", "label": "Relay" },
+    { "id": "notify", "type": "frontend", "label": "relay notify" },
+    { "id": "workspace", "type": "database", "label": "Local Workspace" },
+    { "id": "agent", "type": "external", "label": "Coding Agent" }
+  ],
+  "segments": [
+    { "from": 150, "to": 280, "label": "Identity A — unresolved finding" },
+    { "from": 290, "to": 425, "label": "Remediation outside Relay" },
+    { "from": 435, "to": 670, "label": "Identity B — resolved evidence" }
+  ],
+  "messages": [
+    { "id": "initial-accepted", "from": "connector", "to": "relay", "y": 165, "label": "accept action_required identity A", "variant": "emphasis" },
+    { "id": "initial-claim", "from": "relay", "to": "notify", "y": 200, "label": "lease notification A", "variant": "security" },
+    { "id": "initial-print", "from": "notify", "to": "agent", "y": 235, "label": "print unresolved thread details + actions", "variant": "emphasis" },
+    { "id": "initial-ack", "from": "notify", "to": "relay", "y": 270, "label": "acknowledge delivery A", "variant": "return" },
+    { "id": "inspect-code", "from": "agent", "to": "workspace", "y": 310, "label": "evaluate finding and modify code", "variant": "default" },
+    { "id": "reply-thread", "from": "agent", "to": "github", "y": 345, "label": "reply with result", "variant": "default" },
+    { "id": "resolve-thread", "from": "agent", "to": "github", "y": 380, "label": "resolve addressed review thread", "variant": "security" },
+    { "id": "resolved-state", "from": "github", "to": "agent", "y": 415, "label": "thread isResolved = true", "variant": "return" },
+    { "id": "reload-resolved-one", "from": "connector", "to": "github", "y": 455, "label": "reload checks + review threads", "variant": "default" },
+    { "id": "resolved-evidence-one", "from": "github", "to": "connector", "y": 485, "label": "same head; finding resolved", "variant": "return" },
+    { "id": "identity-b-one", "from": "connector", "to": "analyzer", "y": 515, "label": "derive identity B; consecutive = 1", "variant": "emphasis" },
+    { "id": "reload-resolved-two", "from": "connector", "to": "github", "y": 550, "label": "reload identical resolved evidence", "variant": "default" },
+    { "id": "identity-b-two", "from": "connector", "to": "analyzer", "y": 580, "label": "identity B; consecutive = 2", "variant": "emphasis" },
+    { "id": "accept-success-b", "from": "connector", "to": "relay", "y": 610, "label": "accept distinct success identity B", "variant": "emphasis" },
+    { "id": "claim-success-b", "from": "relay", "to": "notify", "y": 640, "label": "lease notification B", "variant": "security" },
+    { "id": "print-success-b", "from": "notify", "to": "agent", "y": 660, "label": "print revised success verdict", "variant": "emphasis" }
+  ],
+  "activations": [
+    { "participant": "connector", "from": 160, "to": 620, "type": "backend" },
+    { "participant": "analyzer", "from": 510, "to": 590, "type": "backend" },
+    { "participant": "relay", "from": 160, "to": 650, "type": "database" },
+    { "participant": "notify", "from": 195, "to": 680, "type": "frontend" },
+    { "participant": "agent", "from": 230, "to": 680, "type": "external" },
+    { "participant": "workspace", "from": 305, "to": 390, "type": "database" },
+    { "participant": "github", "from": 340, "to": 560, "type": "external" }
+  ]
+}

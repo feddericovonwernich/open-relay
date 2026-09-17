@@ -2,6 +2,8 @@
 
 **Date:** 2026-09-17
 
+**Architecture and sequence diagrams:** [`../../architecture/pr-watcher/README.md`](../../architecture/pr-watcher/README.md)
+
 ## Purpose
 
 Add one high-fidelity, deterministic pull-request notification that tells a coding agent:

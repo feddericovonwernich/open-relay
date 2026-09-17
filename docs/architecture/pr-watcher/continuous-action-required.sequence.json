@@ -1,0 +1,295 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Continuous Settlement with Action Required",
+    "output": "continuous-action-required.sequence.html",
+    "viewBox": [
+      1550,
+      780
+    ],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "pending-cycle",
+        "label": "Pending cycle",
+        "focus": [
+          "github-rest",
+          "connector",
+          "relay"
+        ],
+        "note": "Low-level events may emit, but one pending Check Run keeps unified verification silent."
+      },
+      {
+        "id": "first-terminal",
+        "label": "First terminal observation",
+        "focus": [
+          "github-rest",
+          "github-graphql",
+          "connector",
+          "analyzer"
+        ],
+        "note": "Terminal checks and unresolved bot threads produce canonical identity observation one."
+      },
+      {
+        "id": "stable-emission",
+        "label": "Stable emission",
+        "focus": [
+          "connector",
+          "analyzer",
+          "relay",
+          "notify",
+          "agent"
+        ],
+        "note": "The identical second observation passes the final head fence and queues one analyzed notification."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "github-rest",
+      "type": "external",
+      "label": "GitHub REST"
+    },
+    {
+      "id": "github-graphql",
+      "type": "external",
+      "label": "GitHub GraphQL"
+    },
+    {
+      "id": "connector",
+      "type": "backend",
+      "label": "GitHub Connector"
+    },
+    {
+      "id": "analyzer",
+      "type": "backend",
+      "label": "Heuristics"
+    },
+    {
+      "id": "relay",
+      "type": "database",
+      "label": "Relay"
+    },
+    {
+      "id": "notify",
+      "type": "frontend",
+      "label": "relay notify"
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "Coding Agent"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 270,
+      "label": "Cycle 1 — pending CI"
+    },
+    {
+      "from": 275,
+      "to": 405,
+      "label": "Cycle 2 — first terminal evidence"
+    },
+    {
+      "from": 410,
+      "to": 685,
+      "label": "Cycle 3 — stable evidence and emission"
+    }
+  ],
+  "messages": [
+    {
+      "id": "poll-pending",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 165,
+      "label": "load configured artifacts + current checks",
+      "variant": "default"
+    },
+    {
+      "id": "pending-response",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 193,
+      "label": "tools complete; one check queued",
+      "variant": "return"
+    },
+    {
+      "id": "emit-low-level",
+      "from": "connector",
+      "to": "relay",
+      "y": 221,
+      "label": "emit existing low-level events",
+      "variant": "dashed"
+    },
+    {
+      "id": "pending-no-unified",
+      "from": "connector",
+      "to": "analyzer",
+      "y": 249,
+      "label": "unified ineligible — no analysis",
+      "variant": "return"
+    },
+    {
+      "id": "poll-terminal-one",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 277,
+      "label": "load terminal current-head checks",
+      "variant": "default"
+    },
+    {
+      "id": "terminal-one-response",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 305,
+      "label": "nonempty terminal check set",
+      "variant": "return"
+    },
+    {
+      "id": "threads-one",
+      "from": "connector",
+      "to": "github-graphql",
+      "y": 333,
+      "label": "query reviewThreads",
+      "variant": "security"
+    },
+    {
+      "id": "unresolved-one",
+      "from": "github-graphql",
+      "to": "connector",
+      "y": 361,
+      "label": "unresolved Bugbot/Copilot threads",
+      "variant": "return"
+    },
+    {
+      "id": "analyze-one",
+      "from": "connector",
+      "to": "analyzer",
+      "y": 389,
+      "label": "canonical bounded evidence",
+      "variant": "emphasis"
+    },
+    {
+      "id": "identity-one",
+      "from": "analyzer",
+      "to": "connector",
+      "y": 417,
+      "label": "action_required; consecutive = 1",
+      "variant": "return"
+    },
+    {
+      "id": "poll-terminal-two",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 445,
+      "label": "reload current-head evidence",
+      "variant": "default"
+    },
+    {
+      "id": "terminal-two-response",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 473,
+      "label": "same terminal check set",
+      "variant": "return"
+    },
+    {
+      "id": "threads-two",
+      "from": "connector",
+      "to": "github-graphql",
+      "y": 501,
+      "label": "reload reviewThreads",
+      "variant": "security"
+    },
+    {
+      "id": "unresolved-two",
+      "from": "github-graphql",
+      "to": "connector",
+      "y": 529,
+      "label": "same unresolved evidence",
+      "variant": "return"
+    },
+    {
+      "id": "stable-analysis",
+      "from": "connector",
+      "to": "analyzer",
+      "y": 557,
+      "label": "same identity; consecutive = 2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "final-head-fence",
+      "from": "connector",
+      "to": "github-rest",
+      "y": 585,
+      "label": "verify current head",
+      "variant": "security"
+    },
+    {
+      "id": "emit-unified",
+      "from": "connector",
+      "to": "relay",
+      "y": 613,
+      "label": "accept pr.verification.settled@1",
+      "variant": "emphasis"
+    },
+    {
+      "id": "wake-notify",
+      "from": "relay",
+      "to": "notify",
+      "y": 641,
+      "label": "matching work item available",
+      "variant": "emphasis"
+    },
+    {
+      "id": "wake-agent",
+      "from": "notify",
+      "to": "agent",
+      "y": 669,
+      "label": "action_required payload",
+      "variant": "emphasis"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "connector",
+      "from": 160,
+      "to": 621,
+      "type": "backend"
+    },
+    {
+      "participant": "github-rest",
+      "from": 160,
+      "to": 593,
+      "type": "external"
+    },
+    {
+      "participant": "github-graphql",
+      "from": 328,
+      "to": 537,
+      "type": "external"
+    },
+    {
+      "participant": "analyzer",
+      "from": 244,
+      "to": 565,
+      "type": "backend"
+    },
+    {
+      "participant": "relay",
+      "from": 216,
+      "to": 649,
+      "type": "database"
+    },
+    {
+      "participant": "notify",
+      "from": 636,
+      "to": 677,
+      "type": "frontend"
+    }
+  ]
+}
