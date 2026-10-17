@@ -26,13 +26,15 @@
     function render() {
       const key = resolveKey(windowObject.location.hash);
       const layout = layouts[key];
-      frame.setAttribute("src", layout.file);
+      frame.setAttribute("src", `${layout.file}#layout-top`);
       frame.setAttribute("title", `${layout.label} architecture layout`);
       if (current) current.textContent = layout.label;
       documentObject.title = `${layout.label} — Open Relay PR Watcher`;
       for (const link of links) {
-        if (link.getAttribute("href") === `#${key}`) link.setAttribute("aria-current", "page");
+        const active = link.getAttribute("href") === `#${key}`;
+        if (active) link.setAttribute("aria-current", "page");
         else link.removeAttribute("aria-current");
+        if (active) link.scrollIntoView?.({ block: "nearest", inline: "nearest" });
       }
     }
 

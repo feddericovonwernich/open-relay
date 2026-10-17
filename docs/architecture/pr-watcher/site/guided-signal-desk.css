@@ -76,6 +76,7 @@ body[data-layout="guided-signal-desk"] {
   position: sticky;
   top: 1rem;
   align-self: start;
+  min-width: 0;
   padding: 2.5rem 0;
 }
 
@@ -299,6 +300,26 @@ body[data-layout="guided-signal-desk"] {
   max-width: 60ch;
   margin: .55rem 0 0;
   color: var(--muted);
+}
+
+@media (min-width: 1201px) {
+  .desk-intro {
+    padding: 2.5rem 0 2.75rem;
+  }
+
+  .desk-intro h1 {
+    max-width: 13ch;
+    margin: .65rem 0 1rem;
+    font-size: clamp(4rem, 5vw, 5.25rem);
+  }
+
+  .intro-copy {
+    font-size: 1rem;
+  }
+
+  .intro-rule {
+    margin: 1.35rem 0 .8rem;
+  }
 }
 
 @media (max-width: 1200px) {

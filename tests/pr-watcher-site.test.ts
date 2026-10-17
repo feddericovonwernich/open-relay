@@ -84,7 +84,7 @@ test("the switcher follows hash navigation and exposes the active layout", async
   };
 
   site.mountSwitcher(document, window);
-  assert.equal(frame.getAttribute("src"), "narrative-dossier.html");
+  assert.equal(frame.getAttribute("src"), "narrative-dossier.html#layout-top");
   assert.equal(current.textContent, "Narrative Dossier");
   assert.equal(links[0].getAttribute("aria-current"), "page");
   assert.equal(links[1].getAttribute("aria-current"), null);
@@ -92,7 +92,7 @@ test("the switcher follows hash navigation and exposes the active layout", async
 
   window.location.hash = "#layered-system-lens";
   onHashChange();
-  assert.equal(frame.getAttribute("src"), "layered-system-lens.html");
+  assert.equal(frame.getAttribute("src"), "layered-system-lens.html#layout-top");
   assert.equal(current.textContent, "Layered System Lens");
   assert.equal(links[0].getAttribute("aria-current"), null);
   assert.equal(links[2].getAttribute("aria-current"), "page");
