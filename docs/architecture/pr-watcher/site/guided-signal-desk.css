@@ -301,7 +301,7 @@ body[data-layout="guided-signal-desk"] {
   color: var(--muted);
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 1200px) {
   .desk-header-inner {
     gap: 1rem;
   }
