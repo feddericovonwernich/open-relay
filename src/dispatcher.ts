@@ -134,6 +134,16 @@ export class Dispatcher {
     return undefined;
   }
 
+  async pollNotification(registration: WorkerRegistration, signal: AbortSignal): Promise<Delivery | undefined> {
+    while (!signal.aborted) {
+      const current = this.authorizeRegistration(registration);
+      const delivery = this.store.acquireNotification(current.capabilities, this.now());
+      if (delivery) return delivery;
+      await this.waitForWork(current.workerId, signal);
+    }
+    return undefined;
+  }
+
   pollOnce(registration: WorkerRegistration, signal?: AbortSignal): Promise<Delivery | undefined> {
     return this.poll(registration, signal ?? AbortSignal.timeout(this.pollTimeoutMs));
   }

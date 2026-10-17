@@ -166,6 +166,7 @@ function validateDefinition(value: unknown, source: string): asserts value is Ev
     throw new RegistryError("definition_invalid", "handler must be an object");
   }
   const handlerRecord = handler as Record<string, unknown>;
+  if (handlerRecord.kind === "notification") return;
   if (handlerRecord.kind === "agent") {
     requireString(handlerRecord.instructions, "handler.instructions");
   } else if (handlerRecord.kind === "process") {
@@ -217,6 +218,9 @@ export function compileRevision(record: StoredDefinitionRevision): DefinitionRev
     outputValidator = ajv.compile(outputSchema);
   } catch (error) {
     throw new RegistryError("definition_invalid", `schema compilation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (definition.handler.kind === "notification" && !outputValidator({ delivered: true })) {
+    throw new RegistryError("definition_invalid", "notification output schema must accept {\"delivered\":true}");
   }
   const revision: DefinitionRevision = {
     digest: record.digest,
@@ -301,7 +305,7 @@ export function loadRegistry(projectRoot: string, definitionsDir: string, previo
       const instructionPath = resolveReferencedPath(root, definition.handler.instructions, directory);
       instructionBytes = readFileSync(instructionPath).toString("utf8");
       instructions = instructionBytes;
-    } else {
+    } else if (definition.handler.kind === "process") {
       const commandPath = resolveReferencedPath(root, definition.handler.command, directory);
       if (!statSync(commandPath).isFile()) throw new RegistryError("definition_invalid", `process command is not a file: ${commandPath}`);
       try {

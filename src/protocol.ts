@@ -1,4 +1,4 @@
-export type HandlerKind = "agent" | "process";
+export type HandlerKind = "agent" | "notification" | "process";
 export type EffectPolicy = "retry-safe" | "idempotency-required" | "manual-recovery";
 
 export interface EventDefinition {
@@ -24,6 +24,7 @@ export interface EventDefinition {
   };
   handler:
     | { kind: "agent"; instructions: string }
+    | { kind: "notification" }
     | { kind: "process"; command: string; args: string[]; env: string[] };
 }
 

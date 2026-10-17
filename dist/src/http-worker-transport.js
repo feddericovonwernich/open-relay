@@ -33,18 +33,11 @@ export class HttpWorkerTransport {
         this.token = options.token;
         this.fetchFn = options.fetch ?? globalThis.fetch;
     }
-    async poll(signal) {
-        const value = await this.json("/v1/agent/poll", {
-            method: "POST",
-            body: JSON.stringify({}),
-            signal,
-        });
-        if (value === null)
-            return undefined;
-        if (!isDelivery(value)) {
-            throw new HttpWorkerTransportError(200, "worker transport returned invalid poll response");
-        }
-        return value;
+    poll(signal) {
+        return this.pollPath("/v1/agent/poll", signal);
+    }
+    pollNotification(signal) {
+        return this.pollPath("/v1/notification/poll", signal);
     }
     async start(authority) {
         await this.json(`/v1/deliveries/${encodeURIComponent(authority.leaseId)}/start`, {
@@ -104,6 +97,19 @@ export class HttpWorkerTransport {
             method: "POST",
             body: JSON.stringify({ effectKey, externalRef }),
         });
+    }
+    async pollPath(path, signal) {
+        const value = await this.json(path, {
+            method: "POST",
+            body: JSON.stringify({}),
+            signal,
+        });
+        if (value === null)
+            return undefined;
+        if (!isDelivery(value)) {
+            throw new HttpWorkerTransportError(200, "worker transport returned invalid poll response");
+        }
+        return value;
     }
     async json(path, init) {
         const response = await this.fetchFn(`${this.baseUrl}${path}`, {

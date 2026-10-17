@@ -94,6 +94,16 @@ export class Dispatcher {
         }
         return undefined;
     }
+    async pollNotification(registration, signal) {
+        while (!signal.aborted) {
+            const current = this.authorizeRegistration(registration);
+            const delivery = this.store.acquireNotification(current.capabilities, this.now());
+            if (delivery)
+                return delivery;
+            await this.waitForWork(current.workerId, signal);
+        }
+        return undefined;
+    }
     pollOnce(registration, signal) {
         return this.poll(registration, signal ?? AbortSignal.timeout(this.pollTimeoutMs));
     }

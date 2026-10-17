@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadRegistry } from "../src/registry.ts";
@@ -50,6 +50,17 @@ test("reload rejects changed content under an existing type and version", async 
   await writeFile(join(root, "handlers", "ui-variant.md"), "changed instructions");
   assert.throws(() => loadRegistry(root, "events", active), /version must increase/);
   assert.equal(active.resolve("ui.variant.requested", 1).digest, active.revisions()[0].digest);
+});
+
+test("notification definitions require the fixed completion result in their output schema", async () => {
+  const root = await fixtureProject();
+  const path = join(root, "events", "ui-variant.v1.json");
+  const value: unknown = JSON.parse(await readFile(path, "utf8"));
+  assert.ok(value !== null && typeof value === "object" && !Array.isArray(value));
+  const definition = value as Record<string, unknown>;
+  definition.handler = { kind: "notification" };
+  await writeFile(path, JSON.stringify(definition));
+  assert.throws(() => loadRegistry(root, "events"), /notification output schema must accept.*delivered/);
 });
 
 test("process definitions reject absolute commands outside the project root", async () => {

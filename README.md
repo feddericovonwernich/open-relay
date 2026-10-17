@@ -123,6 +123,21 @@ park one foreground/background poll -> receive one delivery -> reply start/progr
 
 There is no model or tool execution while the poll is parked, and the harness must never loop `relay get` to acquire work. A timeout means immediate re-poll. An active-delivery error means settle the existing lease before polling again. Worker credentials are kept only in ignored `.relay/agent-leases` files with mode `0600`; they never appear in delivery JSON, stdout, or argv. A Relay restart invalidates those authorities and hands unresolved work to the existing lease recovery path.
 
+### Notification wait
+
+Use `relay notify` for an event definition whose handler is `{"kind":"notification"}`:
+
+```bash
+relay notify \
+  --definitions pr.verification.settled@1 \
+  --correlation-id github:owner/repository:pull-request:197
+```
+
+The command waits without output. It accepts only the listed definitions and the exact correlation ID. It prints one payload JSON line when an event arrives. It starts and completes the lease without exposing the worker token or lease ID. It exits `0` after stdout accepts the payload.
+
+Delivery is at least once. A crash after the print can cause Relay to deliver the payload again after lease recovery.
+
+
 ## GitHub PR connector
 
 Initialize Open Relay for a repository:

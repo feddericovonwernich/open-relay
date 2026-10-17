@@ -60,6 +60,21 @@ park -> wake with one delivery -> start -> optional progress/renew/effect/contro
 
 After the ten-minute deadline with no delivery, the only output is `{"type":"timeout"}` and the harness must re-poll immediately. An active-delivery error means settle the existing lease before polling again. Credentials stay only in ignored `.relay/agent-leases` files with mode `0600`; they are not in delivery JSON, stdout, or argv. A Relay restart invalidates the authority and existing recovery owns unresolved work.
 
+## Notification-only wait
+
+Use this command only with a definition whose handler is `{"kind":"notification"}`:
+
+```bash
+relay notify \
+  --definitions pr.verification.settled@1 \
+  --correlation-id github:owner/repository:pull-request:197
+```
+
+The process stays silent while it waits. It accepts only the listed definitions and the exact correlation ID. It prints the event payload as one JSON line. It waits for stdout to accept that line. It then completes the lease and exits `0`.
+
+The process does not expose the worker token or lease ID. Delivery is at least once. Relay can deliver the payload again if the process exits before completion.
+
+
 ## GitHub PR automation
 
 Generate the base project and connector configuration:
