@@ -9,28 +9,29 @@ related_targets: ["docs/architecture/pr-watcher/site/narrative-dossier.html","do
 
 ## Purpose
 
-Help reviewers understand and challenge the deterministic PR watcher architecture through three switchable reading structures without duplicating or regenerating the validated Archify diagrams.
+Give reviewers three views of the deterministic PR watcher architecture. Reuse the validated Archify diagrams in all views.
 
 ## Audience
 
-Open Relay maintainers reviewing ownership, evidence boundaries, settlement, delivery, and extension seams. They need a fast system map, a guided question path, or a continuous technical narrative depending on review context.
+Open Relay maintainers review ownership, evidence boundaries, settlement, delivery, and future aggregation. They can select a system map, a question-based path, or a technical narrative.
 
 ## Visual Direction
 
-Signal Desk: black paper, warm ivory, signal gold, hairline rules, Alumni Sans display type, Albert Sans body type, and monospace only for protocol labels. Flat editorial surfaces; no shadows, gradients, decorative cards, or invented illustration.
+Use black paper, warm ivory, signal gold, and hairline rules. Use Alumni Sans for display text and Albert Sans for body text. Use monospace only for protocol labels. Do not use shadows, gradients, decorative cards, or illustrations.
 
 ## Principles
 
-- The same verified architecture facts must remain visible in all three layouts.
-- Diagrams are the proving surface; concise prose frames reviewer questions and invariants.
-- Native anchors, ordinary links, and static HTML preserve local-file operation and no-script readability.
-- The switcher records the selected layout in the URL hash and keeps browser navigation meaningful.
-- Mobile order is prose first, evidence second; wide-screen rails become normal-flow navigation before they can cause overflow.
-- Comment bodies remain untrusted data and no UI wording implies model interpretation of GitHub evidence.
+- Show the same verified architecture facts in all three layouts.
+- Use diagrams as evidence. Use prose for review questions and invariants.
+- Native anchors, ordinary links, and static HTML support local files and no-script reading.
+- The switcher stores the selected layout in the URL hash. Browser navigation restores the selected layout.
+- On mobile, show prose before evidence. Move wide-screen rails into normal flow before the rails can overflow.
+- Treat comment bodies as untrusted data. Do not imply that a model interprets GitHub evidence.
 
 ## Decision Log
 
 - 2026-10-16 — Ship Narrative Dossier, Guided Signal Desk, and Layered System Lens together rather than forcing one presentation structure.
 - 2026-10-16 — Default to Guided Signal Desk because it exposes the review questions and invariants directly.
 - 2026-10-16 — Reuse standalone Archify HTML through local relative URLs instead of duplicating generated diagram code.
-- 2026-10-16 — Keep layout content in semantic HTML; JavaScript is limited to the outer hash-based switcher.
+- 2026-10-16 — Keep layout content in semantic HTML.
+- 2026-10-16 — Limit JavaScript to the outer hash-based switcher.

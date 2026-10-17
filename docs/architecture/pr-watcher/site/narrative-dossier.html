@@ -26,7 +26,7 @@
       <p class="protocol dossier-kicker">Open Relay / architecture review</p>
       <p class="dossier-wordmark">Narrative Dossier</p>
     </div>
-    <p class="dossier-header-note">A deterministic PR watcher, read from source evidence to notification.</p>
+    <p class="dossier-header-note">This dossier follows the deterministic PR watcher from source evidence to notification.</p>
   </header>
 
   <div class="dossier-layout">
@@ -50,16 +50,16 @@
       <section class="dossier-opening" aria-labelledby="dossier-title">
         <div class="dossier-copy">
           <p class="protocol gold">Technical dossier / 2026 design</p>
-          <h1 id="dossier-title">One factual notification, assembled once.</h1>
-          <p class="dossier-deck">The GitHub connector owns the facts it already has, turns them into bounded evidence, and emits a deterministic notification only when the observation is eligible. Relay owns durability and delivery; no model interprets repository data.</p>
+          <h1 id="dossier-title">The connector assembles one factual notification.</h1>
+          <p class="dossier-deck">The GitHub connector owns the facts. It converts the facts into bounded evidence. It emits a deterministic notification only for an eligible observation. Relay provides durable delivery. No model interprets repository data.</p>
           <dl class="thesis-list">
             <div>
               <dt>Purpose</dt>
-              <dd>Make review state, CI conclusions, and configured automation actionable through one repeatable path.</dd>
+              <dd>Show review state, CI conclusions, and configured automation in one repeatable path.</dd>
             </div>
             <div>
               <dt>Not in scope</dt>
-              <dd>No speculative projection engine, duplicate discovery boundary, or new interpretation of untrusted comment text.</dd>
+              <dd>The design does not add a projection engine, a second discovery boundary, or an interpretation of untrusted comment text.</dd>
             </div>
           </dl>
         </div>
@@ -69,7 +69,7 @@
               <p class="protocol">Opening map / 01 of 11</p>
               <h2>Runtime architecture</h2>
             </div>
-            <a href="../runtime.architecture.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Runtime architecture</span></a>
+            <a href="../runtime.architecture.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Runtime architecture</span></a>
           </div>
           <div class="viewer-shell">
             <iframe src="../runtime.architecture.html" title="Runtime architecture diagram: GitHub evidence through connector analysis and Relay notification" loading="eager"></iframe>
@@ -82,67 +82,68 @@
         <div class="dossier-copy chapter-copy">
           <p class="protocol gold">Chapter 01 / ownership</p>
           <h2 id="system-title">One factual notification</h2>
-          <p class="chapter-claim">The GitHub connector is the first producer because it already owns authentication, current-head discovery, evidence snapshots, final-head fencing, and per-PR observation state.</p>
-          <p>That ownership keeps the first notification factual rather than inferential. REST supplies the pull request and checks; GraphQL supplies review threads. The connector combines those observations with configured provider identities, applies the design's fixed rules, and hands Relay a generic event. Existing low-level events remain available to other consumers instead of being replaced by a new abstraction.</p>
+          <p class="chapter-claim">The GitHub connector is the first producer. It owns authentication, current-head discovery, evidence snapshots, final-head fencing, and per-PR observation state.</p>
+          <p>This ownership keeps the notification factual. REST supplies pull request data and checks. GraphQL supplies review threads. The connector combines this evidence with configured provider identities. It applies fixed rules and sends a generic event to Relay. Other consumers can continue to use low-level events.</p>
         </div>
-        <p class="review-invariant"><span class="protocol">Review invariant</span> Existing low-level events remain additive and unchanged.</p>
+        <p class="review-invariant"><span class="protocol">Review invariant</span> Low-level events remain available and unchanged.</p>
       </section>
 
       <section class="dossier-chapter" id="setup" aria-labelledby="setup-title">
         <div class="dossier-copy chapter-copy">
           <p class="protocol gold">Chapter 02 / enablement</p>
           <h2 id="setup-title">Dormant until identities are explicit</h2>
-          <p class="chapter-claim">Verification is opt-in and valid only for combined repositories with configured reviewer logins and, where required, an explicit GraphQL URL.</p>
-          <p>Generated contracts can exist without being active. Setup discovers the repository mode, provider identities, reviewer logins, and process supervision before analysis is enabled. Missing or malformed configuration is a boundary failure, not an invitation to guess. This makes an operator's decision visible and prevents an incomplete identity map from becoming a false all-clear.</p>
+          <p class="chapter-claim">Verification is optional. A combined repository must define reviewer logins. The configuration must also define a GraphQL URL when the connector requires one.</p>
+          <p>Generated contracts can remain inactive. Setup finds the repository mode, provider identities, reviewer logins, and process supervision. Setup enables analysis only after it finds these values. Missing or malformed configuration causes a boundary error. This rule shows the operator's decision and prevents a false all-clear from an incomplete identity map.</p>
         </div>
         <figure class="dossier-diagram">
           <div class="diagram-heading">
             <div><p class="protocol">Proving sequence / 02 of 11</p><h3>Setup and identity discovery</h3></div>
-            <a href="../setup-and-discovery.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Setup and identity discovery</span></a>
+            <a href="../setup-and-discovery.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Setup and identity discovery</span></a>
           </div>
           <div class="viewer-shell">
             <iframe src="../setup-and-discovery.sequence.html" title="Setup and identity discovery sequence: repository mode, provider identities, reviewer logins, and supervision" loading="lazy"></iframe>
-            <div class="viewer-meta"><span>Dormant contracts become eligible only after identity pinning.</span><a href="../setup-and-discovery.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+            <div class="viewer-meta"><span>Setup enables a contract only after it identifies all required identities.</span><a href="../setup-and-discovery.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
           </div>
         </figure>
-        <p class="review-invariant"><span class="protocol">Review invariant</span> Missing or malformed evidence is never interpreted as an all-clear.</p>
+        <p class="review-invariant"><span class="protocol">Review invariant</span> The connector never treats missing or malformed evidence as an all-clear.</p>
       </section>
 
       <section class="dossier-chapter" id="evidence" aria-labelledby="evidence-title">
         <div class="dossier-copy chapter-copy">
           <p class="protocol gold">Chapter 03 / evidence</p>
-          <h2 id="evidence-title">Resolved means GitHub says resolved</h2>
-          <p class="chapter-claim">Review findings come from <code>PullRequestReviewThread.isResolved</code> and the root comment author, with deterministic pagination, truncation, counts, and evidence digesting.</p>
-          <p>GraphQL pagination is bounded and explicit. A thread matches a configured provider by its root author; its resolution state is read from GitHub's authoritative field, not inferred from comment prose. The connector preserves enough evidence for an action without another discovery query, while payload bounds keep the event suitable for transport and replay. Comment bodies remain data even when they contain instructions.</p>
+          <h2 id="evidence-title">GitHub supplies the resolution state</h2>
+          <p class="chapter-claim">The connector reads review findings from <code>PullRequestReviewThread.isResolved</code> and the root comment author. It uses deterministic pagination, truncation, counts, and evidence digests.</p>
+          <p>The connector bounds GraphQL pagination. It matches a thread to a configured provider by the root comment author. GitHub's <code>isResolved</code> field supplies the resolution state. The connector does not infer resolution from comment text.</p>
+          <p>The connector keeps enough evidence to act without another query. Payload limits keep the event suitable for transport and replay. Comment bodies remain data even if they contain instructions.</p>
         </div>
         <figure class="dossier-diagram">
           <div class="diagram-heading">
-            <div><p class="protocol">Proving sequence / 03 of 11</p><h3>Authoritative review evidence</h3></div>
-            <a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Authoritative review evidence</span></a>
+            <div><p class="protocol">Proving sequence / 03 of 11</p><h3>Review evidence</h3></div>
+            <a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Review evidence</span></a>
           </div>
           <div class="viewer-shell">
-            <iframe src="../review-evidence.sequence.html" title="Authoritative review evidence sequence: GraphQL pagination, provider matching, resolution state, and evidence digest" loading="lazy"></iframe>
-            <div class="viewer-meta"><span>Bounded evidence carries the source of each review conclusion.</span><a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+            <iframe src="../review-evidence.sequence.html" title="Review evidence sequence: GraphQL pagination, provider matching, resolution state, and evidence digest" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Bounded evidence identifies the source of each review result.</span><a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
           </div>
         </figure>
-        <p class="review-invariant"><span class="protocol">Review invariant</span> Comment bodies are untrusted data, never instructions.</p>
+        <p class="review-invariant"><span class="protocol">Review invariant</span> Treat comment bodies as untrusted data, not as instructions.</p>
       </section>
 
       <section class="dossier-chapter" id="decisions" aria-labelledby="decisions-title">
         <div class="dossier-copy chapter-copy">
           <p class="protocol gold">Chapter 04 / verdict</p>
-          <h2 id="decisions-title">Fixed rules, reviewable outcomes</h2>
-          <p class="chapter-claim">Terminal Check Runs, unresolved configured-provider threads, and ambiguous neutral Bugbot results map to a closed action set.</p>
-          <p>The decision boundary is intentionally small. Failed CI, unresolved review findings, and the specified neutral Bugbot ambiguity become action items; an all-clear result has an empty action list. The same raw evidence therefore has one verdict, and the payload records the rule-shaped outcome instead of asking a model to explain it.</p>
+          <h2 id="decisions-title">Fixed rules produce one verdict</h2>
+          <p class="chapter-claim">Terminal Check Runs, unresolved configured-provider threads, and ambiguous neutral Bugbot results map to a fixed action set.</p>
+          <p>The decision rules are small and fixed. Failed CI, an unresolved review finding, and an ambiguous neutral Bugbot result each create an action. An all-clear result has no actions. The same evidence always produces the same verdict. The payload records that verdict. A model does not explain the evidence.</p>
         </div>
         <figure class="dossier-diagram">
           <div class="diagram-heading">
-            <div><p class="protocol">Proving sequence / 04 of 11</p><h3>Deterministic verification heuristics</h3></div>
-            <a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Deterministic verification heuristics</span></a>
+            <div><p class="protocol">Proving sequence / 04 of 11</p><h3>Heuristic decisions</h3></div>
+            <a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Heuristic decisions</span></a>
           </div>
           <div class="viewer-shell">
-            <iframe src="../heuristic-decisions.sequence.html" title="Deterministic verification heuristics sequence: CI, review, Bugbot, and fixed verdict actions" loading="lazy"></iframe>
-            <div class="viewer-meta"><span>Raw conclusions map to success or action-required without model inference.</span><a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+            <iframe src="../heuristic-decisions.sequence.html" title="Heuristic decisions sequence: CI, review, Bugbot, and fixed verdict actions" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Fixed rules map evidence to success or action-required. A model does not interpret the evidence.</span><a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
           </div>
         </figure>
         <p class="review-invariant"><span class="protocol">Review invariant</span> <code>verdict = actions.length === 0 ? success : action_required</code>.</p>
@@ -152,132 +153,134 @@
         <div class="dossier-copy chapter-copy">
           <p class="protocol gold">Chapter 05 / settlement</p>
           <h2 id="settlement-title">Stable evidence before emission</h2>
-          <p class="chapter-claim">Continuous mode waits for two identical eligible observations; one-shot mode reconciles immediately. Both apply the final head fence and canonical payload identity.</p>
-          <p>Continuous polling records an observation, waits for terminal evidence, and requires the next eligible observation to match before emitting. A changed head resets that observation. One-shot mode takes the eligible snapshot immediately, while the same canonical identity makes restart replay idempotent. Resolution or edits can change the evidence digest at the same head, so a stable, distinct identity may produce a new notification rather than being suppressed as a duplicate.</p>
+          <p class="chapter-claim">Continuous mode requires two identical eligible observations. One-shot mode evaluates immediately. Both modes use a final head fence and a canonical payload identity.</p>
+          <p>Continuous polling records an observation. It waits for terminal evidence. It emits only after the next eligible observation matches. A changed head resets the observation.</p>
+          <p>One-shot mode evaluates the eligible observation immediately. Both modes use the same canonical identity. This identity makes restart replay idempotent. A resolved or edited thread can change the digest at the same head. Continuous mode then requires two stable observations of the new identity. One-shot mode does not wait.</p>
         </div>
         <div class="dossier-diagram-stack">
           <figure class="dossier-diagram">
             <div class="diagram-heading">
               <div><p class="protocol">Proving sequence / 05 of 11</p><h3>Continuous action-required settlement</h3></div>
-              <a href="../continuous-action-required.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Continuous action-required settlement</span></a>
+              <a href="../continuous-action-required.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Continuous action-required settlement</span></a>
             </div>
             <div class="viewer-shell">
               <iframe src="../continuous-action-required.sequence.html" title="Continuous action-required settlement sequence: stable observations, final head fence, and notification emission" loading="lazy"></iframe>
-              <div class="viewer-meta"><span>Two matching observations fence the actionable path.</span><a href="../continuous-action-required.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+              <div class="viewer-meta"><span>Two matching observations produce an action-required notification.</span><a href="../continuous-action-required.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
             </div>
           </figure>
           <figure class="dossier-diagram">
             <div class="diagram-heading">
               <div><p class="protocol">Proving sequence / 06 of 11</p><h3>Continuous successful settlement</h3></div>
-              <a href="../continuous-success.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Continuous successful settlement</span></a>
+              <a href="../continuous-success.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Continuous successful settlement</span></a>
             </div>
             <div class="viewer-shell">
               <iframe src="../continuous-success.sequence.html" title="Continuous successful settlement sequence: stable all-clear evidence and empty action list" loading="lazy"></iframe>
-              <div class="viewer-meta"><span>Stable all-clear evidence emits success with no actions.</span><a href="../continuous-success.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+              <div class="viewer-meta"><span>Two matching all-clear observations produce a success notification.</span><a href="../continuous-success.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
             </div>
           </figure>
           <figure class="dossier-diagram">
             <div class="diagram-heading">
-              <div><p class="protocol">Proving sequence / 07 of 11</p><h3>One-shot reconciliation and deterministic replay</h3></div>
-              <a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: One-shot reconciliation and deterministic replay</span></a>
+              <div><p class="protocol">Proving sequence / 07 of 11</p><h3>One-shot reconciliation and replay</h3></div>
+              <a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: One-shot reconciliation and replay</span></a>
             </div>
             <div class="viewer-shell">
-              <iframe src="../once-and-replay.sequence.html" title="One-shot reconciliation and deterministic replay sequence: immediate snapshot, canonical identity, and Relay replay" loading="lazy"></iframe>
-              <div class="viewer-meta"><span>One-shot and restart paths share canonical event identity.</span><a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+              <iframe src="../once-and-replay.sequence.html" title="One-shot reconciliation and replay sequence: immediate observation, canonical identity, and Relay replay" loading="lazy"></iframe>
+              <div class="viewer-meta"><span>One-shot mode and restart replay use the same event identity.</span><a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
             </div>
           </figure>
           <figure class="dossier-diagram">
             <div class="diagram-heading">
-              <div><p class="protocol">Proving sequence / 08 of 11</p><h3>Review resolution and same-head re-evaluation</h3></div>
-              <a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Review resolution and same-head re-evaluation</span></a>
+              <div><p class="protocol">Proving sequence / 08 of 11</p><h3>Evidence change and re-evaluation</h3></div>
+              <a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Evidence change and re-evaluation</span></a>
             </div>
             <div class="viewer-shell">
-              <iframe src="../evidence-change.sequence.html" title="Review resolution and same-head re-evaluation sequence: changed evidence identity and revised notification" loading="lazy"></iframe>
-              <div class="viewer-meta"><span>A changed digest can produce a distinct same-head notification.</span><a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+              <iframe src="../evidence-change.sequence.html" title="Evidence change and re-evaluation sequence: changed evidence identity and new notification" loading="lazy"></iframe>
+              <div class="viewer-meta"><span>A changed digest can produce a new notification for the same head.</span><a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
             </div>
           </figure>
         </div>
-        <p class="review-invariant"><span class="protocol">Review invariant</span> A changed head resets observation; an accepted same-head identity never reposts in process state.</p>
+        <p class="review-invariant"><span class="protocol">Review invariant</span> A changed head resets the observation. The process does not post an accepted same-head identity again.</p>
       </section>
 
       <section class="dossier-chapter" id="delivery" aria-labelledby="delivery-title">
         <div class="dossier-copy chapter-copy">
           <p class="protocol gold">Chapter 06 / durability</p>
-          <h2 id="delivery-title">Print, then acknowledge</h2>
-          <p class="chapter-claim">A notification-only worker path claims one correlation-scoped event, prints one JSON line, and completes internally only after stdout succeeds.</p>
-          <p><code>relay notify</code> hides registration and leasing from the connector. A single consumer claims the event, writes the notification, and acknowledges only after the write succeeds. If the process crashes before completion, the lease can be replayed; this is at-least-once delivery by construction. Silent loss is not traded for a misleading exactly-once promise.</p>
+          <h2 id="delivery-title">Print precedes completion</h2>
+          <p class="chapter-claim">The notification worker claims one event for one correlation. It prints one JSON line. It completes the event only after stdout succeeds.</p>
+          <p><code>relay notify</code> hides registration and leasing from the connector. One consumer claims the event. It prints the notification. It completes the event only after the print succeeds.</p>
+          <p>If the process crashes before completion, the lease expires and Relay can replay the event. This process gives at-least-once delivery. It does not claim exactly-once delivery.</p>
         </div>
         <figure class="dossier-diagram">
           <div class="diagram-heading">
             <div><p class="protocol">Proving sequence / 09 of 11</p><h3>Single-consumer notification delivery</h3></div>
-            <a href="../notification-delivery.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Single-consumer notification delivery</span></a>
+            <a href="../notification-delivery.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Single-consumer notification delivery</span></a>
           </div>
           <div class="viewer-shell">
-            <iframe src="../notification-delivery.sequence.html" title="Single-consumer notification delivery sequence: claim, print, complete, and crash replay" loading="lazy"></iframe>
-            <div class="viewer-meta"><span>Completion follows a successful print, preserving at-least-once delivery.</span><a href="../notification-delivery.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+            <iframe src="../notification-delivery.sequence.html" title="Single-consumer notification delivery sequence: claim, print, completion, and crash replay" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>The worker completes the event only after a successful print. This order preserves at-least-once delivery.</span><a href="../notification-delivery.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
           </div>
         </figure>
-        <p class="review-invariant"><span class="protocol">Review invariant</span> Delivery is at least once; silent loss is forbidden.</p>
+        <p class="review-invariant"><span class="protocol">Review invariant</span> Delivery is at least once. The worker must not lose an event silently.</p>
       </section>
 
       <section class="dossier-chapter" id="resilience" aria-labelledby="resilience-title">
         <div class="dossier-copy chapter-copy">
           <p class="protocol gold">Chapter 07 / resilience</p>
-          <h2 id="resilience-title">Failure stays in its lane</h2>
-          <p class="chapter-claim">GraphQL errors, invalid verification mappings, Relay outages, and head drift isolate unified verification without suppressing configured automation or generic CI events.</p>
-          <p>Authentication is connector-fatal because no trustworthy source can exist without it. Other failures are narrower: a GraphQL error affects the repository verification path; a Relay outage remains retryable; head drift suppresses a stale unified event. Sibling repositories and low-level events continue, so one incomplete evidence path cannot stop unrelated automation.</p>
+          <h2 id="resilience-title">Failures remain isolated</h2>
+          <p class="chapter-claim">GraphQL errors, invalid verification mappings, Relay outages, and head drift affect only unified verification. Configured automation and generic CI events continue.</p>
+          <p>The connector stops if authentication fails. Without authentication, the connector cannot trust the source. A GraphQL error affects only that repository's verification path. A Relay outage delays delivery. Head drift suppresses a stale unified event. Sibling repositories and low-level events continue.</p>
         </div>
         <figure class="dossier-diagram">
           <div class="diagram-heading">
             <div><p class="protocol">Proving sequence / 10 of 11</p><h3>Failure isolation and retry</h3></div>
-            <a href="../failure-isolation.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Failure isolation and retry</span></a>
+            <a href="../failure-isolation.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Failure isolation and retry</span></a>
           </div>
           <div class="viewer-shell">
             <iframe src="../failure-isolation.sequence.html" title="Failure isolation and retry sequence: GraphQL, Relay, and head-drift scope boundaries" loading="lazy"></iframe>
-            <div class="viewer-meta"><span>Repository- and path-scoped failures leave sibling paths alive.</span><a href="../failure-isolation.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+            <div class="viewer-meta"><span>Repository and path failures do not stop sibling paths.</span><a href="../failure-isolation.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
           </div>
         </figure>
-        <p class="review-invariant"><span class="protocol">Review invariant</span> Authentication remains connector-fatal; other failures stay repository- or path-scoped.</p>
+        <p class="review-invariant"><span class="protocol">Review invariant</span> An authentication failure stops the connector. Other failures remain repository- or path-scoped.</p>
       </section>
 
       <section class="dossier-chapter" id="future" aria-labelledby="future-title">
         <div class="dossier-copy chapter-copy">
-          <p class="protocol gold">Chapter 08 / seam</p>
-          <h2 id="future-title">A seam, not an engine</h2>
-          <p class="chapter-claim">The event and notification contracts remain generic enough for a future durable aggregation family, but no projection engine is built without a second use case.</p>
-          <p>Correlated low-level events can later feed a typed durable reducer without changing the generic delivery contract. That possibility is a boundary, not a reason to invent machinery now. The first producer stays connector-owned, and any migration must preserve explicit versions, identity, and delivery semantics so the future path can be reviewed against the same facts.</p>
+          <p class="protocol gold">Chapter 08 / future aggregation</p>
+          <h2 id="future-title">Future aggregation remains optional</h2>
+          <p class="chapter-claim">The event and notification contracts can support a future durable aggregator. The design does not add a projection engine before a second use case exists.</p>
+          <p>A future typed durable reducer can consume correlated low-level events. It can reuse the notification delivery contract. The current design defines only this boundary. The connector remains the first producer. A migration must preserve or version the producer, identity, and delivery rules.</p>
         </div>
         <figure class="dossier-diagram">
           <div class="diagram-heading">
-            <div><p class="protocol">Closing proof / 11 of 11</p><h3>Future Relay aggregation family</h3></div>
-            <a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer">Open standalone viewer<span class="sr-only">: Future Relay aggregation family</span></a>
+            <div><p class="protocol">Closing proof / 11 of 11</p><h3>Future aggregation family</h3></div>
+            <a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer">Open viewer<span class="sr-only">: Future aggregation family</span></a>
           </div>
           <div class="viewer-shell">
-            <iframe src="../future-aggregation-family.sequence.html" title="Future Relay aggregation family sequence: correlated events, durable reducer, and reused notification delivery" loading="lazy"></iframe>
-            <div class="viewer-meta"><span>A future reducer is a seam with a second use case, not present machinery.</span><a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
+            <iframe src="../future-aggregation-family.sequence.html" title="Future aggregation family sequence: correlated events, durable reducer, and notification delivery" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>The design adds a future reducer only after a second use case.</span><a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></div>
           </div>
         </figure>
-        <p class="review-invariant"><span class="protocol">Review invariant</span> Migration requires a new version or explicitly preserved producer and idempotency semantics.</p>
+        <p class="review-invariant"><span class="protocol">Review invariant</span> A migration must create a new version or preserve producer and idempotency rules.</p>
       </section>
 
       <section class="dossier-index" aria-labelledby="diagram-index-title">
         <div class="dossier-copy">
           <p class="protocol gold">Appendix / complete reachability</p>
           <h2 id="diagram-index-title">Diagram index</h2>
-          <p>Every validated Archify viewer used by this dossier is listed in reading order. Open any entry for its standalone controls, search, relationship tracing, and export options.</p>
+          <p>The index lists all validated Archify viewers in reading order. Open an entry to inspect its viewer.</p>
         </div>
         <ol class="diagram-index-list">
-          <li><a href="../runtime.architecture.html" target="_blank" rel="noreferrer"><span class="protocol">01</span><strong>Runtime architecture</strong><span>REST and GraphQL evidence, connector analysis, Relay notification, and the future seam.</span></a></li>
+          <li><a href="../runtime.architecture.html" target="_blank" rel="noreferrer"><span class="protocol">01</span><strong>Runtime architecture</strong><span>REST and GraphQL evidence, connector analysis, Relay notification, and future aggregation.</span></a></li>
           <li><a href="../setup-and-discovery.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">02</span><strong>Setup and identity discovery</strong><span>Generated contracts, repository mode, provider identities, and supervision.</span></a></li>
-          <li><a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">03</span><strong>Authoritative review evidence</strong><span>Pagination, provider matching, resolution, digesting, and bounds.</span></a></li>
-          <li><a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">04</span><strong>Deterministic verification heuristics</strong><span>CI, unresolved findings, neutral Bugbot, and fixed verdict rules.</span></a></li>
+          <li><a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">03</span><strong>Review evidence</strong><span>Pagination, provider matching, resolution, digesting, and bounds.</span></a></li>
+          <li><a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">04</span><strong>Heuristic decisions</strong><span>CI, unresolved findings, neutral Bugbot, and fixed verdict rules.</span></a></li>
           <li><a href="../continuous-action-required.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">05</span><strong>Continuous action-required settlement</strong><span>Stable terminal observations, head fencing, and actionable emission.</span></a></li>
           <li><a href="../continuous-success.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">06</span><strong>Continuous successful settlement</strong><span>Stable all-clear evidence and a success notification.</span></a></li>
-          <li><a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">07</span><strong>One-shot reconciliation and deterministic replay</strong><span>Immediate snapshot, canonical event identity, and restart replay.</span></a></li>
+          <li><a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">07</span><strong>One-shot reconciliation and replay</strong><span>Immediate snapshot, canonical event identity, and restart replay.</span></a></li>
           <li><a href="../notification-delivery.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">08</span><strong>Single-consumer notification delivery</strong><span>Claim, print, completion, and crash replay.</span></a></li>
-          <li><a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">09</span><strong>Review resolution and same-head re-evaluation</strong><span>Changed evidence identity and revised notification delivery.</span></a></li>
+          <li><a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">09</span><strong>Evidence change and re-evaluation</strong><span>Changed evidence identity and new notification delivery.</span></a></li>
           <li><a href="../failure-isolation.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">10</span><strong>Failure isolation and retry</strong><span>GraphQL, Relay, head-drift, and sibling-path boundaries.</span></a></li>
-          <li><a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">11</span><strong>Future Relay aggregation family</strong><span>Correlated events, a durable reducer, and reused delivery.</span></a></li>
+          <li><a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer"><span class="protocol">11</span><strong>Future aggregation family</strong><span>Correlated events, a durable reducer, and notification delivery.</span></a></li>
         </ol>
       </section>
     </main>
