@@ -2,6 +2,16 @@
 
 Validated Archify diagrams for the design in [`../../superpowers/specs/2026-09-17-deterministic-pr-watcher-design.md`](../../superpowers/specs/2026-09-17-deterministic-pr-watcher-design.md).
 
+## Guided architecture site
+
+Open [`site/index.html`](site/index.html) for three switchable explanations of the same design:
+
+- **Narrative Dossier** — a continuous technical argument with review invariants.
+- **Guided Signal Desk** — a review station organized around the questions collaborators should challenge.
+- **Layered System Lens** — a map-first view that separates evidence, decisions, settlement, delivery, resilience, and future aggregation.
+
+The site is static, works from `file://`, and embeds these standalone viewers without duplicating their generated diagram code.
+
 ## Recommended reading order
 
 | # | Diagram | Type | Covers |
