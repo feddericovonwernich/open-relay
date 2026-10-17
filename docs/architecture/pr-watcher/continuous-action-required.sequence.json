@@ -255,41 +255,19 @@
     }
   ],
   "activations": [
-    {
-      "participant": "connector",
-      "from": 160,
-      "to": 621,
-      "type": "backend"
-    },
-    {
-      "participant": "github-rest",
-      "from": 160,
-      "to": 593,
-      "type": "external"
-    },
-    {
-      "participant": "github-graphql",
-      "from": 328,
-      "to": 537,
-      "type": "external"
-    },
-    {
-      "participant": "analyzer",
-      "from": 244,
-      "to": 565,
-      "type": "backend"
-    },
-    {
-      "participant": "relay",
-      "from": 216,
-      "to": 649,
-      "type": "database"
-    },
-    {
-      "participant": "notify",
-      "from": 636,
-      "to": 677,
-      "type": "frontend"
-    }
+    { "participant": "connector", "from": 160, "to": 254, "type": "backend" },
+    { "participant": "connector", "from": 272, "to": 422, "type": "backend" },
+    { "participant": "connector", "from": 440, "to": 621, "type": "backend" },
+    { "participant": "github-rest", "from": 160, "to": 201, "type": "external" },
+    { "participant": "github-rest", "from": 272, "to": 313, "type": "external" },
+    { "participant": "github-rest", "from": 440, "to": 481, "type": "external" },
+    { "participant": "github-rest", "from": 580, "to": 593, "type": "external" },
+    { "participant": "github-graphql", "from": 328, "to": 369, "type": "external" },
+    { "participant": "github-graphql", "from": 496, "to": 537, "type": "external" },
+    { "participant": "analyzer", "from": 384, "to": 425, "type": "backend" },
+    { "participant": "analyzer", "from": 552, "to": 565, "type": "backend" },
+    { "participant": "relay", "from": 216, "to": 229, "type": "database" },
+    { "participant": "relay", "from": 608, "to": 649, "type": "database" },
+    { "participant": "notify", "from": 636, "to": 677, "type": "frontend" }
   ]
 }

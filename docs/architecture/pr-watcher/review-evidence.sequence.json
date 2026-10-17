@@ -56,9 +56,9 @@
   ],
   "activations": [
     { "participant": "connector", "from": 160, "to": 610, "type": "backend" },
-    { "participant": "github-graphql", "from": 160, "to": 280, "type": "external" },
+    { "participant": "github-graphql", "from": 160, "to": 210, "type": "external" },
+    { "participant": "github-graphql", "from": 230, "to": 280, "type": "external" },
     { "participant": "classifier", "from": 305, "to": 435, "type": "security" },
-    { "participant": "budgeter", "from": 345, "to": 560, "type": "backend" },
-    { "participant": "payload", "from": 460, "to": 610, "type": "messagebus" }
+    { "participant": "budgeter", "from": 345, "to": 560, "type": "backend" }
   ]
 }

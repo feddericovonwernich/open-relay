@@ -250,41 +250,19 @@
     }
   ],
   "activations": [
-    {
-      "participant": "notify",
-      "from": 160,
-      "to": 705,
-      "type": "frontend"
-    },
-    {
-      "participant": "authority-files",
-      "from": 356,
-      "to": 369,
-      "type": "database"
-    },
-    {
-      "participant": "relay-http",
-      "from": 188,
-      "to": 509,
-      "type": "security"
-    },
-    {
-      "participant": "dispatcher",
-      "from": 272,
-      "to": 677,
-      "type": "backend"
-    },
-    {
-      "participant": "store",
-      "from": 300,
-      "to": 621,
-      "type": "database"
-    },
-    {
-      "participant": "agent",
-      "from": 412,
-      "to": 705,
-      "type": "external"
-    }
+    { "participant": "notify", "from": 160, "to": 509, "type": "frontend" },
+    { "participant": "notify", "from": 524, "to": 593, "type": "frontend" },
+    { "participant": "notify", "from": 636, "to": 705, "type": "frontend" },
+    { "participant": "relay-http", "from": 188, "to": 229, "type": "security" },
+    { "participant": "relay-http", "from": 244, "to": 341, "type": "security" },
+    { "participant": "relay-http", "from": 384, "to": 397, "type": "security" },
+    { "participant": "relay-http", "from": 468, "to": 509, "type": "security" },
+    { "participant": "dispatcher", "from": 272, "to": 341, "type": "backend" },
+    { "participant": "dispatcher", "from": 524, "to": 537, "type": "backend" },
+    { "participant": "dispatcher", "from": 608, "to": 621, "type": "backend" },
+    { "participant": "dispatcher", "from": 664, "to": 677, "type": "backend" },
+    { "participant": "agent", "from": 412, "to": 453, "type": "external" },
+    { "participant": "agent", "from": 552, "to": 565, "type": "external" },
+    { "participant": "agent", "from": 692, "to": 705, "type": "external" }
   ]
 }

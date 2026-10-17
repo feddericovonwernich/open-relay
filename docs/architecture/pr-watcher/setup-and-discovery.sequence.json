@@ -60,10 +60,10 @@
   ],
   "activations": [
     { "participant": "relay-cli", "from": 160, "to": 260, "type": "frontend" },
-    { "participant": "project-files", "from": 190, "to": 235, "type": "database" },
     { "participant": "relay-runtime", "from": 290, "to": 620, "type": "backend" },
     { "participant": "github-connector", "from": 325, "to": 438, "type": "backend" },
     { "participant": "github", "from": 360, "to": 408, "type": "external" },
-    { "participant": "supervisor", "from": 545, "to": 620, "type": "cloud" }
+    { "participant": "supervisor", "from": 545, "to": 620, "type": "cloud" },
+    { "participant": "github-connector", "from": 575, "to": 620, "type": "backend" }
   ]
 }

@@ -60,10 +60,10 @@
     { "id": "converge", "from": "family", "to": "family-state", "y": 705, "label": "converge; do not duplicate output", "variant": "security" }
   ],
   "activations": [
-    { "participant": "relay-log", "from": 160, "to": 680, "type": "database" },
-    { "participant": "family", "from": 195, "to": 715, "type": "backend" },
-    { "participant": "family-state", "from": 230, "to": 715, "type": "database" },
-    { "participant": "notification", "from": 485, "to": 535, "type": "messagebus" },
-    { "participant": "notify", "from": 555, "to": 605, "type": "frontend" }
+    { "participant": "family", "from": 195, "to": 278, "type": "backend" },
+    { "participant": "family", "from": 340, "to": 428, "type": "backend" },
+    { "participant": "family", "from": 485, "to": 498, "type": "backend" },
+    { "participant": "family", "from": 630, "to": 713, "type": "backend" },
+    { "participant": "notify", "from": 555, "to": 603, "type": "frontend" }
   ]
 }

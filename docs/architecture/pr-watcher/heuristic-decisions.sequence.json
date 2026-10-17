@@ -60,8 +60,9 @@
     { "id": "frozen-payload", "from": "payload", "to": "analyzer", "y": 665, "label": "deeply frozen deterministic payload", "variant": "return" }
   ],
   "activations": [
-    { "participant": "evidence", "from": 160, "to": 590, "type": "database" },
-    { "participant": "analyzer", "from": 160, "to": 675, "type": "backend" },
-    { "participant": "payload", "from": 200, "to": 675, "type": "messagebus" }
+    { "participant": "analyzer", "from": 160, "to": 255, "type": "backend" },
+    { "participant": "analyzer", "from": 300, "to": 395, "type": "backend" },
+    { "participant": "analyzer", "from": 440, "to": 535, "type": "backend" },
+    { "participant": "analyzer", "from": 575, "to": 675, "type": "backend" }
   ]
 }

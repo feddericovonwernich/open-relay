@@ -53,11 +53,16 @@
     { "id": "print-success", "from": "notify", "to": "agent", "y": 615, "label": "verdict success; actions []", "variant": "emphasis" }
   ],
   "activations": [
-    { "participant": "connector", "from": 160, "to": 570, "type": "backend" },
-    { "participant": "github-rest", "from": 160, "to": 535, "type": "external" },
-    { "participant": "github-graphql", "from": 225, "to": 468, "type": "external" },
-    { "participant": "analyzer", "from": 290, "to": 503, "type": "backend" },
-    { "participant": "relay", "from": 555, "to": 598, "type": "database" },
-    { "participant": "notify", "from": 585, "to": 628, "type": "frontend" }
+    { "participant": "connector", "from": 160, "to": 338, "type": "backend" },
+    { "participant": "connector", "from": 365, "to": 568, "type": "backend" },
+    { "participant": "github-rest", "from": 160, "to": 203, "type": "external" },
+    { "participant": "github-rest", "from": 365, "to": 408, "type": "external" },
+    { "participant": "github-rest", "from": 520, "to": 533, "type": "external" },
+    { "participant": "github-graphql", "from": 225, "to": 268, "type": "external" },
+    { "participant": "github-graphql", "from": 425, "to": 468, "type": "external" },
+    { "participant": "analyzer", "from": 290, "to": 338, "type": "backend" },
+    { "participant": "analyzer", "from": 485, "to": 503, "type": "backend" },
+    { "participant": "relay", "from": 555, "to": 583, "type": "database" },
+    { "participant": "notify", "from": 570, "to": 628, "type": "frontend" }
   ]
 }

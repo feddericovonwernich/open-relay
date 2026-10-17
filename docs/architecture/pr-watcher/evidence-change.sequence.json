@@ -61,12 +61,22 @@
     { "id": "print-success-b", "from": "notify", "to": "agent", "y": 660, "label": "print revised success verdict", "variant": "emphasis" }
   ],
   "activations": [
-    { "participant": "connector", "from": 160, "to": 620, "type": "backend" },
-    { "participant": "analyzer", "from": 510, "to": 590, "type": "backend" },
-    { "participant": "relay", "from": 160, "to": 650, "type": "database" },
-    { "participant": "notify", "from": 195, "to": 680, "type": "frontend" },
-    { "participant": "agent", "from": 230, "to": 680, "type": "external" },
-    { "participant": "workspace", "from": 305, "to": 390, "type": "database" },
-    { "participant": "github", "from": 340, "to": 560, "type": "external" }
+    { "participant": "connector", "from": 160, "to": 173, "type": "backend" },
+    { "participant": "connector", "from": 450, "to": 523, "type": "backend" },
+    { "participant": "connector", "from": 545, "to": 618, "type": "backend" },
+    { "participant": "analyzer", "from": 510, "to": 523, "type": "backend" },
+    { "participant": "analyzer", "from": 575, "to": 588, "type": "backend" },
+    { "participant": "relay", "from": 160, "to": 173, "type": "database" },
+    { "participant": "relay", "from": 195, "to": 208, "type": "database" },
+    { "participant": "relay", "from": 265, "to": 278, "type": "database" },
+    { "participant": "relay", "from": 605, "to": 648, "type": "database" },
+    { "participant": "notify", "from": 195, "to": 278, "type": "frontend" },
+    { "participant": "notify", "from": 635, "to": 668, "type": "frontend" },
+    { "participant": "agent", "from": 230, "to": 423, "type": "external" },
+    { "participant": "agent", "from": 655, "to": 668, "type": "external" },
+    { "participant": "github", "from": 340, "to": 353, "type": "external" },
+    { "participant": "github", "from": 375, "to": 423, "type": "external" },
+    { "participant": "github", "from": 450, "to": 493, "type": "external" },
+    { "participant": "github", "from": 545, "to": 558, "type": "external" }
   ]
 }

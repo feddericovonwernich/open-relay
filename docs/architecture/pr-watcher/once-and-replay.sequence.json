@@ -53,10 +53,16 @@
     { "id": "summary", "from": "connector", "to": "operator", "y": 610, "label": "summary: replayed = 1", "variant": "return" }
   ],
   "activations": [
-    { "participant": "connector", "from": 160, "to": 618, "type": "backend" },
-    { "participant": "github-rest", "from": 195, "to": 475, "type": "external" },
-    { "participant": "github-graphql", "from": 255, "to": 505, "type": "external" },
-    { "participant": "analyzer", "from": 315, "to": 537, "type": "backend" },
-    { "participant": "relay", "from": 375, "to": 595, "type": "database" }
+    { "participant": "connector", "from": 160, "to": 418, "type": "backend" },
+    { "participant": "connector", "from": 430, "to": 618, "type": "backend" },
+    { "participant": "github-rest", "from": 195, "to": 238, "type": "external" },
+    { "participant": "github-rest", "from": 345, "to": 358, "type": "external" },
+    { "participant": "github-rest", "from": 460, "to": 473, "type": "external" },
+    { "participant": "github-graphql", "from": 255, "to": 298, "type": "external" },
+    { "participant": "github-graphql", "from": 490, "to": 503, "type": "external" },
+    { "participant": "analyzer", "from": 315, "to": 328, "type": "backend" },
+    { "participant": "analyzer", "from": 520, "to": 533, "type": "backend" },
+    { "participant": "relay", "from": 375, "to": 418, "type": "database" },
+    { "participant": "relay", "from": 550, "to": 593, "type": "database" }
   ]
 }
