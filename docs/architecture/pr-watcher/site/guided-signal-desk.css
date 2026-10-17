@@ -125,7 +125,7 @@ body[data-layout="guided-signal-desk"] {
 .rail-note {
   max-width: 15ch;
   margin: 2rem 0 0;
-  color: var(--faint);
+  color: var(--muted);
   font-size: .76rem;
   line-height: 1.5;
 }
