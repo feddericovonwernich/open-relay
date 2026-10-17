@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080807">
+  <meta name="description" content="A guided review station for the deterministic Open Relay PR watcher architecture.">
+  <title>Guided Signal Desk — Open Relay PR Watcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600&family=Alumni+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="guided-signal-desk.css">
+  <script src="content.js" defer></script>
+</head>
+<body data-layout="guided-signal-desk"><!--
+    THESIS: Guided review makes one deterministic notification path challengeable from boundary to seam.
+    OWN-WORLD: Three-column signal desk: chapter keys, plain-language briefing, and a ruled diagram theater.
+    STORY: Reviewers move through seven questions while every claim stays beside its proving Archify viewer.
+    FIRST VIEWPORT: System boundary briefing sits beside the runtime map; the chapter rail keeps the full route visible.
+    FORM: Native anchors and direct viewer links; no script is required to understand or navigate the review.
+    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+  -->
+  <a class="skip-link" href="#review">Skip to guided review</a>
+  <header class="desk-header">
+    <div class="desk-header-inner">
+      <a class="desk-brand" href="index.html">Open Relay <small>Deterministic PR watcher</small></a>
+      <div class="desk-context">
+        <span class="protocol">Review station / 07 questions</span>
+        <span class="desk-context-note">Briefing, challenge, evidence</span>
+      </div>
+      <a class="desk-exit" href="index.html">All layouts <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <main class="desk-layout" id="review">
+    <aside class="chapter-rail" aria-label="Guided review chapters">
+      <p class="protocol rail-label">Chapter key</p>
+      <nav aria-label="Jump to review chapter">
+        <ol class="chapter-key-list">
+          <li><a class="chapter-key" href="#system"><span class="chapter-marker">01</span><span>System boundary</span></a></li>
+          <li><a class="chapter-key" href="#evidence"><span class="chapter-marker">02</span><span>Evidence</span></a></li>
+          <li><a class="chapter-key" href="#decisions"><span class="chapter-marker">03</span><span>Decisions</span></a></li>
+          <li><a class="chapter-key" href="#settlement"><span class="chapter-marker">04</span><span>Settlement</span></a></li>
+          <li><a class="chapter-key" href="#delivery"><span class="chapter-marker">05</span><span>Delivery</span></a></li>
+          <li><a class="chapter-key" href="#resilience"><span class="chapter-marker">06</span><span>Resilience</span></a></li>
+          <li><a class="chapter-key" href="#extension-seam"><span class="chapter-marker">07</span><span>Extension seam</span></a></li>
+        </ol>
+      </nav>
+      <p class="rail-note">Use the question as the stop point. Open a viewer when the claim needs a closer trace.</p>
+    </aside>
+
+    <div class="desk-story">
+      <header class="desk-intro">
+        <p class="protocol gold">Guided Signal Desk / deterministic review</p>
+        <h1>One factual notification,<br><em>seven questions.</em></h1>
+        <p class="intro-copy">This station keeps the reviewer’s challenge beside the evidence that can answer it. Start at the connector boundary, follow bounded review evidence into a fixed verdict, then test settlement, delivery, failure isolation, and the future seam.</p>
+        <div class="intro-rule" aria-hidden="true"><span></span></div>
+        <p class="intro-note"><strong>Reading contract:</strong> the diagrams are the proving surface. The prose names what to challenge; each viewer opens the complete Archify source without requiring this page’s runtime.</p>
+      </header>
+
+      <section class="chapter" id="system" aria-labelledby="system-title">
+        <div class="chapter-brief">
+          <div class="chapter-heading">
+            <p class="protocol chapter-kicker">01 / system boundary</p>
+            <h2 id="system-title">One factual notification</h2>
+          </div>
+          <p class="chapter-claim">The GitHub connector is the first producer because it already owns authentication, current-head discovery, evidence snapshots, final-head fencing, and per-PR observation state. Setup stays dormant until repository mode, provider identities, reviewer logins, and process supervision are explicit.</p>
+          <p class="review-question"><span class="protocol">Reviewer question</span> Is any input duplicated or trusted by the wrong boundary?</p>
+          <ul class="challenge-list" aria-label="System boundary challenge prompts">
+            <li>Can the connector produce one factual observation without asking a second component to rediscover the head?</li>
+            <li>Can an operator enable analysis without pinning every identity it depends on?</li>
+          </ul>
+          <p class="review-invariant">Invariant: Existing low-level events remain additive and unchanged.</p>
+        </div>
+        <div class="chapter-theater">
+          <p class="protocol theater-label">Applicable viewers / boundary and setup</p>
+          <article class="viewer-shell">
+            <iframe src="../runtime.architecture.html" title="Runtime architecture diagram showing GitHub, connector-owned analysis, Relay queue, and notification delivery"></iframe>
+            <div class="viewer-meta"><span>Runtime architecture</span><a href="../runtime.architecture.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+          <article class="viewer-shell">
+            <iframe src="../setup-and-discovery.sequence.html" title="Setup and identity discovery sequence diagram" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Setup and identity discovery</span><a href="../setup-and-discovery.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="chapter" id="evidence" aria-labelledby="evidence-title">
+        <div class="chapter-brief">
+          <div class="chapter-heading">
+            <p class="protocol chapter-kicker">02 / evidence</p>
+            <h2 id="evidence-title">Resolved means GitHub says resolved</h2>
+          </div>
+          <p class="chapter-claim">Review findings come from <code>PullRequestReviewThread.isResolved</code> and the root comment author, with deterministic pagination, truncation, counts, and evidence digesting. Comment bodies are data, never instructions.</p>
+          <p class="review-question"><span class="protocol">Reviewer question</span> Does the payload preserve enough bounded evidence for action without another discovery query?</p>
+          <ul class="challenge-list" aria-label="Evidence challenge prompts">
+            <li>Does provider matching use the root author rather than an untrusted reply?</li>
+            <li>Are pagination, truncation, counts, and the digest stable when GitHub returns the same evidence?</li>
+          </ul>
+          <p class="review-invariant">Invariant: Comment bodies are untrusted data, never instructions.</p>
+        </div>
+        <div class="chapter-theater">
+          <p class="protocol theater-label">Applicable viewer / authoritative evidence</p>
+          <article class="viewer-shell">
+            <iframe src="../review-evidence.sequence.html" title="Authoritative review evidence sequence diagram showing pagination, provider matching, resolution, and bounded payloads" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Authoritative review evidence</span><a href="../review-evidence.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="chapter" id="decisions" aria-labelledby="decisions-title">
+        <div class="chapter-brief">
+          <div class="chapter-heading">
+            <p class="protocol chapter-kicker">03 / decisions</p>
+            <h2 id="decisions-title">Fixed rules, reviewable outcomes</h2>
+          </div>
+          <p class="chapter-claim">Terminal Check Runs, unresolved configured-provider threads, and ambiguous neutral Bugbot results map to a closed action set. No model interprets GitHub data.</p>
+          <p class="review-question"><span class="protocol">Reviewer question</span> Can the same raw evidence ever produce two verdicts?</p>
+          <ul class="challenge-list" aria-label="Decision challenge prompts">
+            <li>Can every terminal result be traced to one deterministic action or to an explicit all-clear?</li>
+            <li>Does an ambiguous neutral result remain visible instead of being mistaken for success?</li>
+          </ul>
+          <p class="review-invariant">Invariant: <code>verdict = actions.length === 0 ? success : action_required</code>.</p>
+        </div>
+        <div class="chapter-theater">
+          <p class="protocol theater-label">Applicable viewer / deterministic heuristics</p>
+          <article class="viewer-shell">
+            <iframe src="../heuristic-decisions.sequence.html" title="Deterministic verification heuristics sequence diagram showing fixed action mappings" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Deterministic verification heuristics</span><a href="../heuristic-decisions.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="chapter" id="settlement" aria-labelledby="settlement-title">
+        <div class="chapter-brief">
+          <div class="chapter-heading">
+            <p class="protocol chapter-kicker">04 / settlement</p>
+            <h2 id="settlement-title">Stable evidence before emission</h2>
+          </div>
+          <p class="chapter-claim">Continuous mode waits for two identical eligible observations; one-shot mode reconciles immediately. Both apply the final head fence and canonical payload identity. A changed head resets observation, while an accepted same-head identity never reposts in process state.</p>
+          <p class="review-question"><span class="protocol">Reviewer question</span> Which late evidence changes the identity, and which transient failure only delays it?</p>
+          <ul class="challenge-list" aria-label="Settlement challenge prompts">
+            <li>Can a pending check or head drift create an emission before the final fence?</li>
+            <li>Do success, action-required, one-shot, and replay paths agree on canonical identity?</li>
+            <li>Can a resolved or edited thread create a distinct same-head notification after stability?</li>
+          </ul>
+          <p class="review-invariant">Invariant: A changed head resets observation; an accepted same-head identity never reposts in process state.</p>
+        </div>
+        <div class="chapter-theater">
+          <p class="protocol theater-label">Applicable viewers / continuous, one-shot, and change paths</p>
+          <article class="viewer-shell">
+            <iframe src="../continuous-action-required.sequence.html" title="Continuous action-required settlement sequence diagram" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Continuous action-required settlement</span><a href="../continuous-action-required.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+          <article class="viewer-shell">
+            <iframe src="../continuous-success.sequence.html" title="Continuous successful settlement sequence diagram" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Continuous successful settlement</span><a href="../continuous-success.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+          <article class="viewer-shell">
+            <iframe src="../once-and-replay.sequence.html" title="One-shot reconciliation and deterministic replay sequence diagram" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>One-shot reconciliation and replay</span><a href="../once-and-replay.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+          <article class="viewer-shell">
+            <iframe src="../evidence-change.sequence.html" title="Review resolution and same-head re-evaluation sequence diagram" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Review resolution and same-head re-evaluation</span><a href="../evidence-change.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="chapter" id="delivery" aria-labelledby="delivery-title">
+        <div class="chapter-brief">
+          <div class="chapter-heading">
+            <p class="protocol chapter-kicker">05 / delivery</p>
+            <h2 id="delivery-title">Print, then acknowledge</h2>
+          </div>
+          <p class="chapter-claim">A notification-only worker path claims one correlation-scoped event, prints one JSON line, and completes internally only after stdout succeeds. Relay registration and leasing remain behind <code>relay notify</code>.</p>
+          <p class="review-question"><span class="protocol">Reviewer question</span> What happens at each crash point around printing and completion?</p>
+          <ul class="challenge-list" aria-label="Delivery challenge prompts">
+            <li>Can a crash before stdout acknowledgment leave an event available for replay?</li>
+            <li>Can one claim produce duplicate output, or can completion silently discard it?</li>
+          </ul>
+          <p class="review-invariant">Invariant: Delivery is at least once; silent loss is forbidden.</p>
+        </div>
+        <div class="chapter-theater">
+          <p class="protocol theater-label">Applicable viewer / notification lifecycle</p>
+          <article class="viewer-shell">
+            <iframe src="../notification-delivery.sequence.html" title="Single-consumer notification delivery sequence diagram showing print-before-acknowledgment" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Single-consumer notification delivery</span><a href="../notification-delivery.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="chapter" id="resilience" aria-labelledby="resilience-title">
+        <div class="chapter-brief">
+          <div class="chapter-heading">
+            <p class="protocol chapter-kicker">06 / resilience</p>
+            <h2 id="resilience-title">Failure stays in its lane</h2>
+          </div>
+          <p class="chapter-claim">GraphQL errors, invalid verification mappings, Relay outages, and head drift isolate unified verification without suppressing configured automation or generic CI events.</p>
+          <p class="review-question"><span class="protocol">Reviewer question</span> Can one repository or evidence source stop sibling repositories or low-level events?</p>
+          <ul class="challenge-list" aria-label="Resilience challenge prompts">
+            <li>Which failures are connector-fatal, and which stay repository- or path-scoped?</li>
+            <li>Does a Relay outage retry delivery without changing the connector’s low-level event stream?</li>
+          </ul>
+          <p class="review-invariant">Invariant: Authentication remains connector-fatal; other failures stay repository- or path-scoped.</p>
+        </div>
+        <div class="chapter-theater">
+          <p class="protocol theater-label">Applicable viewer / failure isolation</p>
+          <article class="viewer-shell">
+            <iframe src="../failure-isolation.sequence.html" title="Failure isolation and retry sequence diagram" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Failure isolation and retry</span><a href="../failure-isolation.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="chapter" id="extension-seam" aria-labelledby="extension-title">
+        <div class="chapter-brief">
+          <div class="chapter-heading">
+            <p class="protocol chapter-kicker">07 / extension seam</p>
+            <h2 id="extension-title">A seam, not an engine</h2>
+          </div>
+          <p class="chapter-claim">The event and notification contracts remain generic enough for a future durable aggregation family, but no projection engine is built without a second use case.</p>
+          <p class="review-question"><span class="protocol">Reviewer question</span> Does the connector-owned first producer preserve a clean migration path without speculative machinery?</p>
+          <ul class="challenge-list" aria-label="Extension seam challenge prompts">
+            <li>Can a later typed durable reducer consume correlated events without rewriting delivery?</li>
+            <li>What producer and idempotency semantics must be preserved or versioned at migration?</li>
+          </ul>
+          <p class="review-invariant">Invariant: Migration requires a new version or explicitly preserved producer and idempotency semantics.</p>
+        </div>
+        <div class="chapter-theater">
+          <p class="protocol theater-label">Applicable viewer / future aggregation family</p>
+          <article class="viewer-shell">
+            <iframe src="../future-aggregation-family.sequence.html" title="Future Relay aggregation family sequence diagram" loading="lazy"></iframe>
+            <div class="viewer-meta"><span>Future Relay aggregation family</span><a href="../future-aggregation-family.sequence.html">Open viewer <span aria-hidden="true">↗</span></a></div>
+          </article>
+        </div>
+      </section>
+
+      <footer class="desk-footer">
+        <p class="protocol gold">Signal Desk closeout</p>
+        <p>Challenge the question, inspect the viewer, then carry the invariant forward. The complete architecture remains available through the <a href="index.html">layout switcher</a>.</p>
+      </footer>
+    </div>
+  </main>
+</body>
+</html>
