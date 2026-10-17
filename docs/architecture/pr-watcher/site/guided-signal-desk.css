@@ -345,7 +345,7 @@ body[data-layout="guided-signal-desk"] {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 860px) {
   .desk-header-inner {
     grid-template-columns: 1fr auto;
     min-height: 4.25rem;
