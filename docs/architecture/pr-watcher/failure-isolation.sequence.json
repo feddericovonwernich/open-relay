@@ -6,7 +6,7 @@
     "output": "failure-isolation.sequence.html",
     "viewBox": [
       1550,
-      770
+      900
     ],
     "column_fit": "spread",
     "quality_profile": "showcase",
@@ -84,12 +84,12 @@
     },
     {
       "from": 325,
-      "to": 575,
+      "to": 685,
       "label": "Stable event retries after Relay outage"
     },
     {
-      "from": 580,
-      "to": 680,
+      "from": 700,
+      "to": 830,
       "label": "Final head drift"
     }
   ],
@@ -147,30 +147,54 @@
       "from": "connector",
       "to": "github-rest",
       "y": 333,
-      "label": "next cycle: reload current facts",
+      "label": "reload current-head facts",
       "variant": "default"
+    },
+    {
+      "id": "complete-facts",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 361,
+      "label": "terminal current-head facts",
+      "variant": "return"
     },
     {
       "id": "query-threads-ok",
       "from": "connector",
       "to": "github-graphql",
-      "y": 361,
-      "label": "reviewThreads succeeds",
+      "y": 389,
+      "label": "query reviewThreads",
       "variant": "security"
+    },
+    {
+      "id": "review-facts-ok",
+      "from": "github-graphql",
+      "to": "connector",
+      "y": 417,
+      "label": "authoritative review evidence",
+      "variant": "return"
     },
     {
       "id": "analyze-stable",
       "from": "connector",
       "to": "analyzer",
-      "y": 389,
-      "label": "eligible stable identity",
+      "y": 445,
+      "label": "analyze eligible evidence",
       "variant": "emphasis"
+    },
+    {
+      "id": "stable-identity",
+      "from": "analyzer",
+      "to": "connector",
+      "y": 473,
+      "label": "stable eligible identity",
+      "variant": "return"
     },
     {
       "id": "post-unavailable",
       "from": "connector",
       "to": "relay",
-      "y": 417,
+      "y": 501,
       "label": "POST unified notification",
       "variant": "emphasis"
     },
@@ -178,7 +202,7 @@
       "id": "relay-down",
       "from": "relay",
       "to": "connector",
-      "y": 445,
+      "y": 529,
       "label": "relay_unavailable",
       "variant": "return"
     },
@@ -186,7 +210,7 @@
       "id": "retain-identity",
       "from": "connector",
       "to": "supervisor",
-      "y": 473,
+      "y": 557,
       "label": "retain eligible identity for retry",
       "variant": "dashed"
     },
@@ -194,15 +218,23 @@
       "id": "retry-head",
       "from": "connector",
       "to": "github-rest",
-      "y": 501,
-      "label": "retry cycle + final head fence",
+      "y": 585,
+      "label": "verify current head",
       "variant": "security"
+    },
+    {
+      "id": "retry-head-ok",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 613,
+      "label": "head SHA unchanged",
+      "variant": "return"
     },
     {
       "id": "retry-post",
       "from": "connector",
       "to": "relay",
-      "y": 529,
+      "y": 641,
       "label": "POST same deterministic key",
       "variant": "emphasis"
     },
@@ -210,7 +242,7 @@
       "id": "retry-created",
       "from": "relay",
       "to": "connector",
-      "y": 557,
+      "y": 669,
       "label": "201 emitted or 200 replayed",
       "variant": "return"
     },
@@ -218,15 +250,23 @@
       "id": "new-observation",
       "from": "connector",
       "to": "analyzer",
-      "y": 585,
-      "label": "later evidence reaches stability",
+      "y": 705,
+      "label": "analyze later stable evidence",
       "variant": "default"
+    },
+    {
+      "id": "new-observation-ok",
+      "from": "analyzer",
+      "to": "connector",
+      "y": 733,
+      "label": "eligible identity",
+      "variant": "return"
     },
     {
       "id": "drift-fence",
       "from": "connector",
       "to": "github-rest",
-      "y": 613,
+      "y": 761,
       "label": "verify snapshot head",
       "variant": "security"
     },
@@ -234,7 +274,7 @@
       "id": "head-changed",
       "from": "github-rest",
       "to": "connector",
-      "y": 641,
+      "y": 789,
       "label": "pull request head changed",
       "variant": "return"
     },
@@ -242,26 +282,26 @@
       "id": "delete-observation",
       "from": "connector",
       "to": "supervisor",
-      "y": 669,
+      "y": 817,
       "label": "delete stale observation; emit nothing",
       "variant": "dashed"
     }
   ],
   "activations": [
     { "participant": "connector", "from": 160, "to": 313, "type": "backend" },
-    { "participant": "connector", "from": 328, "to": 481, "type": "backend" },
-    { "participant": "connector", "from": 496, "to": 565, "type": "backend" },
+    { "participant": "connector", "from": 328, "to": 565, "type": "backend" },
     { "participant": "connector", "from": 580, "to": 677, "type": "backend" },
+    { "participant": "connector", "from": 700, "to": 825, "type": "backend" },
     { "participant": "github-rest", "from": 160, "to": 201, "type": "external" },
-    { "participant": "github-rest", "from": 328, "to": 341, "type": "external" },
-    { "participant": "github-rest", "from": 496, "to": 509, "type": "external" },
-    { "participant": "github-rest", "from": 608, "to": 649, "type": "external" },
+    { "participant": "github-rest", "from": 328, "to": 369, "type": "external" },
+    { "participant": "github-rest", "from": 580, "to": 621, "type": "external" },
+    { "participant": "github-rest", "from": 756, "to": 797, "type": "external" },
     { "participant": "github-graphql", "from": 244, "to": 285, "type": "external" },
-    { "participant": "github-graphql", "from": 356, "to": 369, "type": "external" },
-    { "participant": "analyzer", "from": 384, "to": 397, "type": "backend" },
-    { "participant": "analyzer", "from": 580, "to": 593, "type": "backend" },
+    { "participant": "github-graphql", "from": 384, "to": 425, "type": "external" },
+    { "participant": "analyzer", "from": 440, "to": 481, "type": "backend" },
+    { "participant": "analyzer", "from": 700, "to": 741, "type": "backend" },
     { "participant": "relay", "from": 216, "to": 229, "type": "database" },
-    { "participant": "relay", "from": 412, "to": 453, "type": "database" },
-    { "participant": "relay", "from": 524, "to": 565, "type": "database" }
+    { "participant": "relay", "from": 496, "to": 537, "type": "database" },
+    { "participant": "relay", "from": 636, "to": 677, "type": "database" }
   ]
 }

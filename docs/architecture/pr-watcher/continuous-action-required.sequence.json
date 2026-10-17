@@ -6,7 +6,7 @@
     "output": "continuous-action-required.sequence.html",
     "viewBox": [
       1550,
-      780
+      860
     ],
     "column_fit": "spread",
     "quality_profile": "showcase",
@@ -91,12 +91,12 @@
     },
     {
       "from": 275,
-      "to": 405,
+      "to": 425,
       "label": "Cycle 2 — first terminal evidence"
     },
     {
-      "from": 410,
-      "to": 685,
+      "from": 435,
+      "to": 770,
       "label": "Cycle 3 — stable evidence and emission"
     }
   ],
@@ -130,8 +130,8 @@
       "from": "connector",
       "to": "analyzer",
       "y": 249,
-      "label": "unified ineligible — no analysis",
-      "variant": "return"
+      "label": "skip unified analysis",
+      "variant": "dashed"
     },
     {
       "id": "poll-terminal-one",
@@ -218,56 +218,81 @@
       "from": "connector",
       "to": "analyzer",
       "y": 557,
-      "label": "same identity; consecutive = 2",
+      "label": "analyze same canonical identity",
       "variant": "emphasis"
+    },
+    {
+      "id": "stable-verdict",
+      "from": "analyzer",
+      "to": "connector",
+      "y": 585,
+      "label": "action_required; consecutive = 2",
+      "variant": "return"
     },
     {
       "id": "final-head-fence",
       "from": "connector",
       "to": "github-rest",
-      "y": 585,
+      "y": 613,
       "label": "verify current head",
       "variant": "security"
+    },
+    {
+      "id": "final-head-current",
+      "from": "github-rest",
+      "to": "connector",
+      "y": 641,
+      "label": "head SHA unchanged",
+      "variant": "return"
     },
     {
       "id": "emit-unified",
       "from": "connector",
       "to": "relay",
-      "y": 613,
+      "y": 669,
       "label": "accept pr.verification.settled@1",
       "variant": "emphasis"
+    },
+    {
+      "id": "unified-accepted",
+      "from": "relay",
+      "to": "connector",
+      "y": 697,
+      "label": "201 accepted",
+      "variant": "return"
     },
     {
       "id": "wake-notify",
       "from": "relay",
       "to": "notify",
-      "y": 641,
-      "label": "matching work item available",
-      "variant": "emphasis"
+      "y": 725,
+      "label": "publish matching work item",
+      "variant": "dashed"
     },
     {
       "id": "wake-agent",
       "from": "notify",
       "to": "agent",
-      "y": 669,
-      "label": "action_required payload",
-      "variant": "emphasis"
+      "y": 753,
+      "label": "emit action_required payload",
+      "variant": "dashed"
     }
   ],
   "activations": [
     { "participant": "connector", "from": 160, "to": 254, "type": "backend" },
     { "participant": "connector", "from": 272, "to": 422, "type": "backend" },
-    { "participant": "connector", "from": 440, "to": 621, "type": "backend" },
+    { "participant": "connector", "from": 440, "to": 705, "type": "backend" },
     { "participant": "github-rest", "from": 160, "to": 201, "type": "external" },
     { "participant": "github-rest", "from": 272, "to": 313, "type": "external" },
     { "participant": "github-rest", "from": 440, "to": 481, "type": "external" },
-    { "participant": "github-rest", "from": 580, "to": 593, "type": "external" },
+    { "participant": "github-rest", "from": 608, "to": 649, "type": "external" },
     { "participant": "github-graphql", "from": 328, "to": 369, "type": "external" },
     { "participant": "github-graphql", "from": 496, "to": 537, "type": "external" },
     { "participant": "analyzer", "from": 384, "to": 425, "type": "backend" },
-    { "participant": "analyzer", "from": 552, "to": 565, "type": "backend" },
+    { "participant": "analyzer", "from": 552, "to": 593, "type": "backend" },
     { "participant": "relay", "from": 216, "to": 229, "type": "database" },
-    { "participant": "relay", "from": 608, "to": 649, "type": "database" },
-    { "participant": "notify", "from": 636, "to": 677, "type": "frontend" }
+    { "participant": "relay", "from": 664, "to": 705, "type": "database" },
+    { "participant": "relay", "from": 720, "to": 733, "type": "database" },
+    { "participant": "notify", "from": 720, "to": 761, "type": "frontend" }
   ]
 }

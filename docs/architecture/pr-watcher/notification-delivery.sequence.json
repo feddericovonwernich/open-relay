@@ -5,8 +5,8 @@
     "title": "Single-consumer Notification Delivery",
     "output": "notification-delivery.sequence.html",
     "viewBox": [
-      1550,
-      790
+      1700,
+      900
     ],
     "column_fit": "spread",
     "quality_profile": "showcase",
@@ -78,13 +78,13 @@
   "segments": [
     {
       "from": 150,
-      "to": 515,
+      "to": 535,
       "label": "Successful delivery"
     },
     {
-      "from": 520,
-      "to": 710,
-      "label": "Crash after print, before acknowledgment"
+      "from": 545,
+      "to": 820,
+      "label": "Leased payload: crash after print, before acknowledgment"
     }
   ],
   "messages": [
@@ -93,14 +93,14 @@
       "from": "supervisor",
       "to": "notify",
       "y": 165,
-      "label": "start with definition + PR correlation",
-      "variant": "emphasis"
+      "label": "start with definition and PR correlation",
+      "variant": "dashed"
     },
     {
       "id": "register",
       "from": "notify",
       "to": "relay-http",
-      "y": 193,
+      "y": 180,
       "label": "register ephemeral notify worker",
       "variant": "security"
     },
@@ -108,7 +108,7 @@
       "id": "worker-token",
       "from": "relay-http",
       "to": "notify",
-      "y": 221,
+      "y": 208,
       "label": "scoped worker token",
       "variant": "return"
     },
@@ -116,55 +116,71 @@
       "id": "poll-notification",
       "from": "notify",
       "to": "relay-http",
-      "y": 249,
+      "y": 236,
       "label": "poll notification-only endpoint",
       "variant": "emphasis"
     },
     {
       "id": "acquire-notification",
       "from": "relay-http",
-      "to": "dispatcher",
-      "y": 277,
-      "label": "acquireNotification",
-      "variant": "default"
-    },
-    {
-      "id": "lease-transaction",
-      "from": "dispatcher",
       "to": "store",
-      "y": 305,
-      "label": "atomic single-consumer lease",
+      "y": 256,
+      "label": "acquire notification and lease",
       "variant": "security"
     },
     {
-      "id": "delivery",
+      "id": "lease-granted",
       "from": "store",
+      "to": "relay-http",
+      "y": 284,
+      "label": "payload and lease",
+      "variant": "return"
+    },
+    {
+      "id": "delivery",
+      "from": "relay-http",
       "to": "notify",
-      "y": 333,
-      "label": "matching analyzed payload + lease",
+      "y": 304,
+      "label": "matching analyzed payload and lease",
       "variant": "return"
     },
     {
       "id": "persist-authority",
       "from": "notify",
       "to": "authority-files",
-      "y": 361,
-      "label": "persist mode-0600 local authority",
+      "y": 332,
+      "label": "persist mode-0600 lease authority",
       "variant": "security"
+    },
+    {
+      "id": "authority-persisted",
+      "from": "authority-files",
+      "to": "notify",
+      "y": 360,
+      "label": "lease authority saved",
+      "variant": "return"
     },
     {
       "id": "start-transition",
       "from": "notify",
       "to": "relay-http",
-      "y": 389,
-      "label": "internal start transition",
+      "y": 388,
+      "label": "start delivery",
       "variant": "default"
+    },
+    {
+      "id": "start-ok",
+      "from": "relay-http",
+      "to": "notify",
+      "y": 416,
+      "label": "delivery started",
+      "variant": "return"
     },
     {
       "id": "print-payload",
       "from": "notify",
       "to": "agent",
-      "y": 417,
+      "y": 444,
       "label": "write one analyzed JSON line",
       "variant": "emphasis"
     },
@@ -172,7 +188,7 @@
       "id": "stdout-ok",
       "from": "agent",
       "to": "notify",
-      "y": 445,
+      "y": 472,
       "label": "stdout write completed",
       "variant": "return"
     },
@@ -180,89 +196,112 @@
       "id": "complete-delivery",
       "from": "notify",
       "to": "relay-http",
-      "y": 473,
-      "label": "complete { delivered: true }",
+      "y": 500,
+      "label": "complete with delivered true",
       "variant": "emphasis"
     },
     {
-      "id": "settle-event",
+      "id": "completion-ok",
       "from": "relay-http",
-      "to": "store",
-      "y": 501,
-      "label": "commit notification completion",
-      "variant": "security"
-    },
-    {
-      "id": "second-lease",
-      "from": "notify",
-      "to": "dispatcher",
-      "y": 529,
-      "label": "poll and claim another notification",
-      "variant": "default"
+      "to": "notify",
+      "y": 528,
+      "label": "completion committed",
+      "variant": "return"
     },
     {
       "id": "second-print",
       "from": "notify",
       "to": "agent",
-      "y": 557,
-      "label": "print payload",
+      "y": 556,
+      "label": "write leased payload to stdout",
       "variant": "emphasis"
     },
     {
-      "id": "crash",
-      "from": "supervisor",
+      "id": "second-stdout-ok",
+      "from": "agent",
       "to": "notify",
-      "y": 585,
-      "label": "process exits before completion",
-      "variant": "dashed"
+      "y": 584,
+      "label": "stdout write completed",
+      "variant": "return"
     },
     {
       "id": "lease-expiry",
-      "from": "dispatcher",
-      "to": "store",
-      "y": 613,
-      "label": "lease expires; schedule retry",
-      "variant": "security"
+      "from": "store",
+      "to": "dispatcher",
+      "y": 612,
+      "label": "lease expired; retry scheduled",
+      "variant": "dashed"
     },
     {
       "id": "restart",
       "from": "supervisor",
       "to": "notify",
-      "y": 641,
+      "y": 640,
       "label": "restart relay notify",
-      "variant": "default"
+      "variant": "dashed"
     },
     {
       "id": "reacquire",
       "from": "notify",
       "to": "dispatcher",
-      "y": 669,
+      "y": 668,
       "label": "reacquire retryable notification",
       "variant": "security"
+    },
+    {
+      "id": "reacquired",
+      "from": "dispatcher",
+      "to": "notify",
+      "y": 696,
+      "label": "same payload and new lease",
+      "variant": "return"
     },
     {
       "id": "reprint",
       "from": "notify",
       "to": "agent",
-      "y": 697,
-      "label": "print again, then complete",
+      "y": 724,
+      "label": "write payload to stdout again",
       "variant": "emphasis"
+    },
+    {
+      "id": "reprint-ok",
+      "from": "agent",
+      "to": "notify",
+      "y": 752,
+      "label": "stdout write completed",
+      "variant": "return"
+    },
+    {
+      "id": "retry-complete",
+      "from": "notify",
+      "to": "relay-http",
+      "y": 780,
+      "label": "complete retried delivery",
+      "variant": "emphasis"
+    },
+    {
+      "id": "retry-completion-ok",
+      "from": "relay-http",
+      "to": "notify",
+      "y": 808,
+      "label": "completion committed",
+      "variant": "return"
     }
   ],
   "activations": [
-    { "participant": "notify", "from": 160, "to": 509, "type": "frontend" },
-    { "participant": "notify", "from": 524, "to": 593, "type": "frontend" },
-    { "participant": "notify", "from": 636, "to": 705, "type": "frontend" },
-    { "participant": "relay-http", "from": 188, "to": 229, "type": "security" },
-    { "participant": "relay-http", "from": 244, "to": 341, "type": "security" },
-    { "participant": "relay-http", "from": 384, "to": 397, "type": "security" },
-    { "participant": "relay-http", "from": 468, "to": 509, "type": "security" },
-    { "participant": "dispatcher", "from": 272, "to": 341, "type": "backend" },
-    { "participant": "dispatcher", "from": 524, "to": 537, "type": "backend" },
-    { "participant": "dispatcher", "from": 608, "to": 621, "type": "backend" },
-    { "participant": "dispatcher", "from": 664, "to": 677, "type": "backend" },
-    { "participant": "agent", "from": 412, "to": 453, "type": "external" },
-    { "participant": "agent", "from": 552, "to": 565, "type": "external" },
-    { "participant": "agent", "from": 692, "to": 705, "type": "external" }
+    { "participant": "notify", "from": 160, "to": 532, "type": "frontend" },
+    { "participant": "notify", "from": 551, "to": 592, "type": "frontend" },
+    { "participant": "notify", "from": 635, "to": 816, "type": "frontend" },
+    { "participant": "relay-http", "from": 175, "to": 216, "type": "security" },
+    { "participant": "relay-http", "from": 231, "to": 312, "type": "security" },
+    { "participant": "relay-http", "from": 383, "to": 424, "type": "security" },
+    { "participant": "relay-http", "from": 495, "to": 536, "type": "security" },
+    { "participant": "relay-http", "from": 775, "to": 816, "type": "security" },
+    { "participant": "dispatcher", "from": 607, "to": 620, "type": "backend" },
+    { "participant": "dispatcher", "from": 663, "to": 704, "type": "backend" },
+    { "participant": "agent", "from": 439, "to": 480, "type": "external" },
+    { "participant": "agent", "from": 551, "to": 592, "type": "external" },
+    { "participant": "agent", "from": 719, "to": 760, "type": "external" }
   ]
 }

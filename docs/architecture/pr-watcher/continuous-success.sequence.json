@@ -4,7 +4,7 @@
   "meta": {
     "title": "Continuous Settlement with Successful Verdict",
     "output": "continuous-success.sequence.html",
-    "viewBox": [1160, 700],
+    "viewBox": [1550, 780],
     "column_fit": "spread",
     "quality_profile": "showcase",
     "views": [
@@ -33,7 +33,7 @@
   ],
   "segments": [
     { "from": 150, "to": 345, "label": "Observation 1" },
-    { "from": 355, "to": 620, "label": "Observation 2 and delivery" }
+    { "from": 355, "to": 700, "label": "Observation 2 and delivery" }
   ],
   "messages": [
     { "id": "load-first", "from": "connector", "to": "github-rest", "y": 165, "label": "load configured artifacts + terminal checks", "variant": "default" },
@@ -46,23 +46,27 @@
     { "id": "passing-second", "from": "github-rest", "to": "connector", "y": 400, "label": "same passing checks", "variant": "return" },
     { "id": "threads-second", "from": "connector", "to": "github-graphql", "y": 430, "label": "reload reviewThreads", "variant": "security" },
     { "id": "resolved-second", "from": "github-graphql", "to": "connector", "y": 460, "label": "same resolved evidence", "variant": "return" },
-    { "id": "stable-success", "from": "connector", "to": "analyzer", "y": 490, "label": "same identity; consecutive = 2", "variant": "emphasis" },
-    { "id": "head-fence", "from": "connector", "to": "github-rest", "y": 525, "label": "verify current head", "variant": "security" },
-    { "id": "accept-success", "from": "connector", "to": "relay", "y": 560, "label": "accept success notification", "variant": "emphasis" },
-    { "id": "claim-success", "from": "relay", "to": "notify", "y": 575, "label": "single-consumer delivery", "variant": "emphasis" },
-    { "id": "print-success", "from": "notify", "to": "agent", "y": 615, "label": "verdict success; actions []", "variant": "emphasis" }
+    { "id": "stable-success", "from": "connector", "to": "analyzer", "y": 490, "label": "analyze same canonical identity", "variant": "emphasis" },
+    { "id": "stable-success-result", "from": "analyzer", "to": "connector", "y": 518, "label": "success; consecutive = 2", "variant": "return" },
+    { "id": "head-fence", "from": "connector", "to": "github-rest", "y": 546, "label": "verify current head", "variant": "security" },
+    { "id": "head-current", "from": "github-rest", "to": "connector", "y": 574, "label": "head SHA unchanged", "variant": "return" },
+    { "id": "accept-success", "from": "connector", "to": "relay", "y": 602, "label": "accept success notification", "variant": "emphasis" },
+    { "id": "success-accepted", "from": "relay", "to": "connector", "y": 630, "label": "201 accepted", "variant": "return" },
+    { "id": "claim-success", "from": "relay", "to": "notify", "y": 658, "label": "publish single-consumer delivery", "variant": "dashed" },
+    { "id": "print-success", "from": "notify", "to": "agent", "y": 686, "label": "emit success payload; actions []", "variant": "dashed" }
   ],
   "activations": [
     { "participant": "connector", "from": 160, "to": 338, "type": "backend" },
-    { "participant": "connector", "from": 365, "to": 568, "type": "backend" },
+    { "participant": "connector", "from": 365, "to": 638, "type": "backend" },
     { "participant": "github-rest", "from": 160, "to": 203, "type": "external" },
     { "participant": "github-rest", "from": 365, "to": 408, "type": "external" },
-    { "participant": "github-rest", "from": 520, "to": 533, "type": "external" },
+    { "participant": "github-rest", "from": 541, "to": 582, "type": "external" },
     { "participant": "github-graphql", "from": 225, "to": 268, "type": "external" },
     { "participant": "github-graphql", "from": 425, "to": 468, "type": "external" },
     { "participant": "analyzer", "from": 290, "to": 338, "type": "backend" },
-    { "participant": "analyzer", "from": 485, "to": 503, "type": "backend" },
-    { "participant": "relay", "from": 555, "to": 583, "type": "database" },
-    { "participant": "notify", "from": 570, "to": 628, "type": "frontend" }
+    { "participant": "analyzer", "from": 485, "to": 526, "type": "backend" },
+    { "participant": "relay", "from": 597, "to": 638, "type": "database" },
+    { "participant": "relay", "from": 653, "to": 666, "type": "database" },
+    { "participant": "notify", "from": 653, "to": 694, "type": "frontend" }
   ]
 }

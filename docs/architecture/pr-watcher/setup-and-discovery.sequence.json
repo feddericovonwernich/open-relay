@@ -4,7 +4,7 @@
   "meta": {
     "title": "PR Watcher Setup and Identity Discovery",
     "output": "setup-and-discovery.sequence.html",
-    "viewBox": [1200, 720],
+    "viewBox": [1200, 760],
     "column_fit": "spread",
     "quality_profile": "showcase",
     "views": [
@@ -40,30 +40,32 @@
   "segments": [
     { "from": 150, "to": 270, "label": "Generate dormant contracts" },
     { "from": 280, "to": 445, "label": "Discover trusted identities" },
-    { "from": 455, "to": 620, "label": "Enable continuous watcher" }
+    { "from": 455, "to": 670, "label": "Enable continuous watcher" }
   ],
   "messages": [
     { "id": "init-project", "from": "engineer", "to": "relay-cli", "y": 165, "label": "relay init --github owner/repo", "variant": "emphasis" },
     { "id": "write-contracts", "from": "relay-cli", "to": "project-files", "y": 195, "label": "write config, schemas, definitions", "variant": "default" },
     { "id": "contracts-written", "from": "project-files", "to": "relay-cli", "y": 225, "label": "verification disabled", "variant": "return" },
     { "id": "next-command", "from": "relay-cli", "to": "engineer", "y": 255, "label": "run discovery", "variant": "return" },
-    { "id": "start-relay", "from": "engineer", "to": "relay-runtime", "y": 295, "label": "relay start", "variant": "default" },
+    { "id": "start-relay", "from": "engineer", "to": "relay-runtime", "y": 295, "label": "start Relay runtime", "variant": "dashed" },
     { "id": "discover-command", "from": "engineer", "to": "github-connector", "y": 330, "label": "relay connect github --once --discover", "variant": "emphasis" },
     { "id": "discover-rest", "from": "github-connector", "to": "github", "y": 365, "label": "list PR artifacts and app identities", "variant": "security" },
     { "id": "identity-results", "from": "github", "to": "github-connector", "y": 400, "label": "check and review identities", "variant": "return" },
     { "id": "print-identities", "from": "github-connector", "to": "engineer", "y": 430, "label": "redacted discovery JSON", "variant": "return" },
     { "id": "pin-config", "from": "engineer", "to": "project-files", "y": 475, "label": "pin Sonar and reviewer logins", "variant": "security" },
-    { "id": "enable-verification", "from": "engineer", "to": "project-files", "y": 510, "label": "enable verification mapping + GraphQL URL", "variant": "emphasis" },
-    { "id": "supervise-connector", "from": "engineer", "to": "supervisor", "y": 550, "label": "start continuous connector", "variant": "default" },
-    { "id": "connector-process", "from": "supervisor", "to": "github-connector", "y": 580, "label": "supervise foreground process", "variant": "dashed" },
-    { "id": "supervise-notify", "from": "engineer", "to": "supervisor", "y": 610, "label": "start relay notify for PR correlation", "variant": "emphasis" }
+    { "id": "pin-config-ok", "from": "project-files", "to": "engineer", "y": 505, "label": "identity pins saved", "variant": "return" },
+    { "id": "enable-verification", "from": "engineer", "to": "project-files", "y": 535, "label": "enable verification mapping and GraphQL URL", "variant": "emphasis" },
+    { "id": "enable-verification-ok", "from": "project-files", "to": "engineer", "y": 565, "label": "verification config saved", "variant": "return" },
+    { "id": "supervise-connector", "from": "engineer", "to": "supervisor", "y": 595, "label": "start continuous connector", "variant": "dashed" },
+    { "id": "connector-process", "from": "supervisor", "to": "github-connector", "y": 625, "label": "supervise foreground process", "variant": "dashed" },
+    { "id": "supervise-notify", "from": "engineer", "to": "supervisor", "y": 655, "label": "start relay notify for PR correlation", "variant": "dashed" }
   ],
   "activations": [
     { "participant": "relay-cli", "from": 160, "to": 260, "type": "frontend" },
-    { "participant": "relay-runtime", "from": 290, "to": 620, "type": "backend" },
+    { "participant": "relay-runtime", "from": 290, "to": 670, "type": "backend" },
     { "participant": "github-connector", "from": 325, "to": 438, "type": "backend" },
     { "participant": "github", "from": 360, "to": 408, "type": "external" },
-    { "participant": "supervisor", "from": 545, "to": 620, "type": "cloud" },
-    { "participant": "github-connector", "from": 575, "to": 620, "type": "backend" }
+    { "participant": "supervisor", "from": 590, "to": 670, "type": "cloud" },
+    { "participant": "github-connector", "from": 620, "to": 670, "type": "backend" }
   ]
 }

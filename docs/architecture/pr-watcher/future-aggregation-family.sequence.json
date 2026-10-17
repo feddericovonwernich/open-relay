@@ -4,7 +4,7 @@
   "meta": {
     "title": "Future Relay Aggregation Family",
     "output": "future-aggregation-family.sequence.html",
-    "viewBox": [1700, 800],
+    "viewBox": [1700, 880],
     "column_fit": "spread",
     "quality_profile": "showcase",
     "views": [
@@ -38,32 +38,39 @@
     { "id": "agent", "type": "external", "label": "Coding Agent" }
   ],
   "segments": [
-    { "from": 150, "to": 395, "label": "Typed reduction by correlation" },
-    { "from": 405, "to": 610, "label": "Settled deterministic output" },
-    { "from": 620, "to": 725, "label": "Restart recovery" }
+    { "from": 150, "to": 455, "label": "Typed reduction by correlation" },
+    { "from": 465, "to": 690, "label": "Settled deterministic output" },
+    { "from": 695, "to": 810, "label": "Restart recovery" }
   ],
   "messages": [
     { "id": "append-first", "from": "producers", "to": "relay-log", "y": 165, "label": "append low-level event A", "variant": "default" },
-    { "id": "read-first", "from": "relay-log", "to": "family", "y": 200, "label": "definition-filtered update + correlation", "variant": "emphasis" },
-    { "id": "reduce-first", "from": "family", "to": "family-state", "y": 235, "label": "reduce state; persist cursor", "variant": "security" },
-    { "id": "state-pending", "from": "family-state", "to": "family", "y": 270, "label": "settled = false", "variant": "return" },
-    { "id": "append-second", "from": "producers", "to": "relay-log", "y": 310, "label": "append low-level event B", "variant": "default" },
-    { "id": "read-second", "from": "relay-log", "to": "family", "y": 345, "label": "next correlated update", "variant": "emphasis" },
-    { "id": "reduce-second", "from": "family", "to": "family-state", "y": 380, "label": "reduce state; persist cursor", "variant": "security" },
-    { "id": "state-settled", "from": "family-state", "to": "family", "y": 420, "label": "settled = true", "variant": "return" },
-    { "id": "emit-output", "from": "family", "to": "notification", "y": 490, "label": "emit deterministic notification identity", "variant": "emphasis" },
-    { "id": "persist-output", "from": "notification", "to": "relay-log", "y": 525, "label": "accept immutable output event", "variant": "security" },
-    { "id": "claim-output", "from": "relay-log", "to": "notify", "y": 560, "label": "single-consumer notification lease", "variant": "emphasis" },
+    { "id": "append-first-ok", "from": "relay-log", "to": "producers", "y": 195, "label": "event A accepted", "variant": "return" },
+    { "id": "read-first", "from": "relay-log", "to": "family", "y": 225, "label": "deliver filtered update and correlation", "variant": "dashed" },
+    { "id": "reduce-first", "from": "family", "to": "family-state", "y": 255, "label": "reduce state and persist cursor", "variant": "security" },
+    { "id": "state-pending", "from": "family-state", "to": "family", "y": 285, "label": "settled = false", "variant": "return" },
+    { "id": "append-second", "from": "producers", "to": "relay-log", "y": 320, "label": "append low-level event B", "variant": "default" },
+    { "id": "append-second-ok", "from": "relay-log", "to": "producers", "y": 350, "label": "event B accepted", "variant": "return" },
+    { "id": "read-second", "from": "relay-log", "to": "family", "y": 380, "label": "deliver next correlated update", "variant": "dashed" },
+    { "id": "reduce-second", "from": "family", "to": "family-state", "y": 410, "label": "reduce state and persist cursor", "variant": "security" },
+    { "id": "state-settled", "from": "family-state", "to": "family", "y": 440, "label": "settled = true", "variant": "return" },
+    { "id": "emit-output", "from": "family", "to": "notification", "y": 475, "label": "emit deterministic notification identity", "variant": "dashed" },
+    { "id": "persist-output", "from": "notification", "to": "relay-log", "y": 505, "label": "accept immutable output event", "variant": "security" },
+    { "id": "persist-output-ok", "from": "relay-log", "to": "notification", "y": 535, "label": "output event accepted", "variant": "return" },
+    { "id": "claim-output", "from": "relay-log", "to": "notify", "y": 565, "label": "lease notification", "variant": "dashed" },
     { "id": "deliver-output", "from": "notify", "to": "agent", "y": 595, "label": "print analyzed payload", "variant": "emphasis" },
-    { "id": "restart-family", "from": "family-state", "to": "family", "y": 635, "label": "restart with durable cursor", "variant": "default" },
-    { "id": "replay-tail", "from": "relay-log", "to": "family", "y": 670, "label": "replay updates after cursor", "variant": "default" },
-    { "id": "converge", "from": "family", "to": "family-state", "y": 705, "label": "converge; do not duplicate output", "variant": "security" }
+    { "id": "deliver-output-ok", "from": "agent", "to": "notify", "y": 625, "label": "stdout write completed", "variant": "return" },
+    { "id": "complete-output", "from": "notify", "to": "relay-log", "y": 655, "label": "complete notification delivery", "variant": "emphasis" },
+    { "id": "complete-output-ok", "from": "relay-log", "to": "notify", "y": 683, "label": "completion committed", "variant": "return" },
+    { "id": "restart-family", "from": "family-state", "to": "family", "y": 711, "label": "durable cursor restored", "variant": "dashed" },
+    { "id": "replay-tail", "from": "relay-log", "to": "family", "y": 739, "label": "replay updates after cursor", "variant": "dashed" },
+    { "id": "converge", "from": "family", "to": "family-state", "y": 767, "label": "converge without duplicate output", "variant": "security" },
+    { "id": "converged", "from": "family-state", "to": "family", "y": 795, "label": "cursor committed; no duplicate", "variant": "return" }
   ],
   "activations": [
-    { "participant": "family", "from": 195, "to": 278, "type": "backend" },
-    { "participant": "family", "from": 340, "to": 428, "type": "backend" },
-    { "participant": "family", "from": 485, "to": 498, "type": "backend" },
-    { "participant": "family", "from": 630, "to": 713, "type": "backend" },
-    { "participant": "notify", "from": 555, "to": 603, "type": "frontend" }
+    { "participant": "family", "from": 220, "to": 293, "type": "backend" },
+    { "participant": "family", "from": 375, "to": 448, "type": "backend" },
+    { "participant": "family", "from": 470, "to": 483, "type": "backend" },
+    { "participant": "family", "from": 706, "to": 803, "type": "backend" },
+    { "participant": "notify", "from": 560, "to": 691, "type": "frontend" }
   ]
 }
