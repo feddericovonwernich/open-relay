@@ -197,3 +197,56 @@ export interface PrCiSettled {
   outcome: "success" | "failure";
   checks: PrCiSettledCheck[];
 }
+
+export type VerificationAction =
+  | {
+      code: "investigate_ci_failures";
+      checkNames: string[];
+      message: "Investigate the failed CI checks. Fix failures caused by the change when possible. Otherwise report the cause and why it could not be fixed automatically.";
+    }
+  | {
+      code: "resolve_review_findings";
+      providers: VerificationProvider[];
+      findingCount: number;
+      message: "Review the unresolved Bugbot/Copilot comments. If a finding is valid, implement a fix. In every case, reply with the result and resolve the thread when addressed.";
+    }
+  | {
+      code: "verify_review_result";
+      provider: "cursor-bugbot";
+      checkName: string;
+      message: "Verify the completed neutral Bugbot result. Confirm whether the run contains findings, cancellation, or an internal error before treating the review as successful.";
+    };
+
+export interface PrVerificationFinding {
+  provider: VerificationProvider;
+  threadId: string;
+  rootCommentId: string;
+  authorLogin: string;
+  url: string;
+  path: string;
+  startLine: number | null;
+  line: number | null;
+  isOutdated: boolean;
+  body: string;
+  bodyTruncated: boolean;
+  replyCount: number;
+}
+
+export interface PrVerificationSettled {
+  schemaVersion: 1;
+  provider: "github";
+  repository: { id: number; fullName: string };
+  pullRequest: { number: number; url: string; headSha: string; baseRef: string };
+  verdict: "success" | "action_required";
+  automation: { artifacts: PrAutomationSettledArtifact[] };
+  ci: PrCiSettled & { failingCheckNames: string[] };
+  reviews: {
+    unresolvedCount: number;
+    includedCount: number;
+    totalReplyCount: number;
+    truncated: boolean;
+    evidenceDigest: string;
+    findings: PrVerificationFinding[];
+  };
+  actions: VerificationAction[];
+}

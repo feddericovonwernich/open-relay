@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { normalizeCiSettled, normalizeCompletion, normalizeSettled } from "./normalize.ts";
-import type { CompletionCandidate, GitHubCheckRun, GitHubConnectorConfig, PrAutomationSettled, PrCiSettled, PrSnapshot, TriggerConfig } from "./types.ts";
+import { verificationKey } from "./verification.ts";
+import type { CompletionCandidate, GitHubCheckRun, GitHubConnectorConfig, GitHubVerificationConfig, PrAutomationSettled, PrCiSettled, PrSnapshot, PrVerificationSettled, TriggerConfig } from "./types.ts";
 
 export interface GitHubRelayEmitterOptions {
   baseUrl: string;
@@ -237,9 +238,9 @@ export class GitHubRelayEmitter {
   private async postSettled(
     mapping: { id: string; emit: { type: string; version: number } },
     snapshot: PrSnapshot,
-    payload: PrAutomationSettled | PrCiSettled,
+    payload: PrAutomationSettled | PrCiSettled | PrVerificationSettled,
     idempotencyKey: string,
-    errors: { drift: "aggregate_drift" | "ci_drift"; invalid: "aggregate_invalid" | "ci_invalid" },
+    errors: { drift: "aggregate_drift" | "ci_drift" | "verification_drift"; invalid: "aggregate_invalid" | "ci_invalid" | "verification_invalid" },
     signal?: AbortSignal,
   ): Promise<"emitted" | "replayed"> {
     const producerToken = await this.producerToken(snapshot.repository.id, signal);
@@ -308,6 +309,22 @@ export class GitHubRelayEmitter {
       payload,
       ciSettledKey(payload),
       { drift: "ci_drift", invalid: "ci_invalid" },
+      signal,
+    );
+  }
+  async emitVerification(
+    verification: GitHubVerificationConfig,
+    snapshot: PrSnapshot,
+    payload: PrVerificationSettled,
+    signal?: AbortSignal,
+  ): Promise<"emitted" | "replayed"> {
+    const key = verificationKey(payload);
+    return this.postSettled(
+      verification,
+      snapshot,
+      payload,
+      key,
+      { drift: "verification_drift", invalid: "verification_invalid" },
       signal,
     );
   }
