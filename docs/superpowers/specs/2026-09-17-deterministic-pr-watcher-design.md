@@ -184,7 +184,7 @@ The connector reads all matching thread identities needed for accurate unresolve
 - Included findings are sorted by provider, path, line, then thread ID.
 - Review evidence has a 48 KiB canonical JSON budget before the rest of the event payload.
 - If the count or byte budget is exceeded, stop adding finding bodies deterministically and set `truncated: true`.
-- Preserve `unresolvedCount`, `includedCount`, and `replyCount` even when bodies are omitted.
+- Preserve `unresolvedCount`, `includedCount`, and `totalReplyCount` even when findings are omitted. Each included finding also preserves its own `replyCount`.
 - `evidenceDigest` is SHA-256 over every matching unresolved thread’s provider, thread ID, resolution/outdated state, path, line range, root comment ID, author login, `updatedAt`, and full root body hash. Changes outside the included body subset still change event identity.
 
 All comment strings are untrusted data. They are never interpreted as instructions by Relay.
@@ -233,6 +233,7 @@ interface PrVerificationSettled {
   reviews: {
     unresolvedCount: number;
     includedCount: number;
+    totalReplyCount: number;
     truncated: boolean;
     evidenceDigest: string;
     findings: Array<{
@@ -581,8 +582,10 @@ Table-driven tests cover:
 - CI failure plus review findings → both actions in fixed order;
 - Bugbot neutral with no unresolved Bugbot threads → verify action;
 - Bugbot neutral with unresolved Bugbot threads → review action only;
+- multiple neutral Bugbot reruns select one artifact from canonical artifact order;
 - late/resolved/edited threads change identity;
-- evidence beyond inclusion limits changes digest and counts without exceeding payload limits.
+- evidence beyond inclusion limits changes the digest and counts, preserves `totalReplyCount`, and keeps review evidence within 48 KiB;
+- a complete payload over 65,536 bytes fails locally with a bounded verification error before any Relay request.
 
 ### Settlement and regression
 
