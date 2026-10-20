@@ -86,6 +86,25 @@ export interface GitHubPullRequestReview {
   submittedAt: string | null;
   htmlUrl: string | null;
 }
+export interface GitHubReviewComment {
+  id: string;
+  url: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  authorLogin: string;
+}
+
+export interface GitHubReviewThread {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  commentCount: number;
+  rootComment: GitHubReviewComment;
+}
 
 export interface PrSnapshot {
   repository: {
