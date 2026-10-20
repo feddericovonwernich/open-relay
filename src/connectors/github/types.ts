@@ -8,9 +8,21 @@ export interface GitHubRepositoryConfig {
     | "configured-tools-and-generic-check-runs";
 }
 
+export type VerificationProvider = "cursor-bugbot" | "copilot-review";
+
+export interface GitHubVerificationConfig {
+  id: string;
+  emit: { type: string; version: number };
+  reviewers: {
+    "cursor-bugbot"?: string[];
+    "copilot-review"?: string[];
+  };
+}
+
 export interface GitHubConnectorConfig {
   connector: "github";
   apiBaseUrl: string;
+  graphqlUrl?: string;
   apiVersion: string;
   tokenEnv: string;
   pollIntervalMs: number;
@@ -21,6 +33,7 @@ export interface GitHubConnectorConfig {
     id: string;
     emit: { type: string; version: number };
   };
+  verification?: GitHubVerificationConfig;
 }
 
 export type TriggerConfig =
