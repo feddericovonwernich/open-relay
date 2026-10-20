@@ -373,8 +373,12 @@ test("maps GraphQL HTTP authentication and not-found errors distinctly", async (
       return graphqlResponse({ error: "Bearer top-secret" }, status);
     };
     const api = client("https://api.github.test", { graphqlUrl: "https://api.github.test/graphql", fetch: fetcher });
-    await assert.rejects(api.listReviewThreads(repo, 7), (error: unknown) =>
-      error instanceof GitHubClientError && error.code === code && error.code !== "github_not_found");
+    await assert.rejects(api.listReviewThreads(repo, 7), (error: unknown) => {
+      assert(error instanceof GitHubClientError);
+      assert.equal(error.code, code);
+      assert.notEqual(error.code, "github_not_found");
+      return true;
+    });
     assert.equal(requestCount, 1);
   }
 });
