@@ -159,7 +159,7 @@ export function normalizeVerification(
   if (matching.length > 0) {
     actions.push({ code: "resolve_review_findings", providers, findingCount: matching.length, message: RESOLVE_MESSAGE });
   }
-  const hasUnresolvedBugbot = matching.some((finding) => finding.provider === "cursor-bugbot");
+  const hasUnresolvedBugbot = canonicalCandidates.some((finding) => finding.provider === "cursor-bugbot");
   if (!hasUnresolvedBugbot) {
     const neutralBugbot = automation.artifacts.find((artifact) => artifact.provider === "cursor-bugbot" && artifact.kind === "check_run" && artifact.conclusion === "neutral");
     if (neutralBugbot) actions.push({ code: "verify_review_result", provider: "cursor-bugbot", checkName: neutralBugbot.name, message: VERIFY_MESSAGE });
