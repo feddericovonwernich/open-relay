@@ -222,26 +222,22 @@ test("accepts and freezes combined configured-tool and generic Check Run mode", 
 
 test("accepts verification, defaults GraphQL, and freezes reviewer configuration", () => {
   const config = validateGitHubConnectorConfig(verificationConfig());
-  const normalized = config as Record<string, unknown>;
-  const verification = normalized.verification as {
-    reviewers: Record<string, string[]>;
-  };
-  assert.equal(normalized.graphqlUrl, "https://api.github.com/graphql");
-  assert.deepEqual(verification.reviewers, {
+  assert.equal(config.graphqlUrl, "https://api.github.com/graphql");
+  assert.deepEqual(config.verification?.reviewers, {
     "cursor-bugbot": ["cursor[bot]"],
     "copilot-review": ["copilot-pull-request-reviewer[bot]"],
   });
-  assert.equal(Object.isFrozen(verification), true);
-  assert.equal(Object.isFrozen(verification.reviewers["cursor-bugbot"]), true);
+  assert.equal(Object.isFrozen(config.verification), true);
+  assert.equal(Object.isFrozen(config.verification?.reviewers["cursor-bugbot"]), true);
 
-  const disabled = validateGitHubConnectorConfig(validConfig()) as Record<string, unknown>;
+  const disabled = validateGitHubConnectorConfig(validConfig());
   assert.equal(Object.hasOwn(disabled, "graphqlUrl"), false);
   assert.equal(Object.hasOwn(disabled, "verification"), false);
 
   const local = verificationConfig() as Record<string, unknown>;
   local.apiBaseUrl = "http://127.0.0.1:8787";
   local.graphqlUrl = "http://127.0.0.1:8788/graphql";
-  const localConfig = validateGitHubConnectorConfig(local, { allowLoopbackHttp: true }) as Record<string, unknown>;
+  const localConfig = validateGitHubConnectorConfig(local, { allowLoopbackHttp: true });
   assert.equal(localConfig.apiBaseUrl, "http://127.0.0.1:8787");
   assert.equal(localConfig.graphqlUrl, "http://127.0.0.1:8788/graphql");
 });
