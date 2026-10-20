@@ -188,6 +188,18 @@ test("verification heuristic table emits exact actions, verdict, and CI failure 
       failing: [],
     },
     {
+      name: "neutral Bugbot with unresolved Copilot thread",
+      candidates: [candidate({ artifact: { ...candidate().artifact, name: "Bugbot neutral", conclusion: "neutral" } })],
+      threads: [withRoot(thread({ id: "copilot-thread" }), { authorLogin: "COPILOT[BOT]" })],
+      actions: [
+        { code: "resolve_review_findings", providers: ["copilot-review"], findingCount: 1, message: messages.resolve_review_findings },
+        { code: "verify_review_result", provider: "cursor-bugbot", checkName: "Bugbot neutral", message: messages.verify_review_result },
+      ],
+      verdict: "action_required",
+      outcome: "success",
+      failing: [],
+    },
+    {
       name: "neutral Bugbot with unresolved Bugbot thread",
       candidates: [candidate({ artifact: { ...candidate().artifact, conclusion: "neutral" } })],
       threads: [thread()],
