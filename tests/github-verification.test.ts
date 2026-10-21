@@ -263,6 +263,30 @@ test("filters configured bot roots case-insensitively and canonicalizes review e
   assert.equal(payload.reviews.findings[0].replyCount, 2);
   assert.equal(payload.reviews.findings[1].isOutdated, true);
 });
+test("matches a reviewer login named constructor with its configured provider", () => {
+  const constructorVerification: GitHubVerificationConfig = {
+    ...verification,
+    reviewers: {
+      ...verification.reviewers,
+      "copilot-review": [...(verification.reviewers["copilot-review"] ?? []), "constructor"],
+    },
+  };
+  const payload = normalizeVerification(
+    snapshot,
+    [candidate()],
+    [check()],
+    [thread({
+      id: "constructor-thread",
+      rootComment: { ...thread().rootComment, authorLogin: "constructor" },
+    })],
+    constructorVerification,
+  );
+
+  assert.equal(payload.reviews.unresolvedCount, 1);
+  assert.equal(payload.reviews.includedCount, 1);
+  assert.equal(payload.reviews.findings[0].provider, "copilot-review");
+  assert.equal(payload.reviews.findings[0].threadId, "constructor-thread");
+});
 
 test("truncates root bodies by Unicode code points and excludes comment timestamps and full body", () => {
   const fullBody = `${"😀".repeat(2_000)}FULL_UNTRUNCATED_BODY`;
