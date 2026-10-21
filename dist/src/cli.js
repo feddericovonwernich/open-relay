@@ -424,7 +424,7 @@ async function execute(parsed, io) {
         const abort = () => controller.abort();
         process.once("SIGINT", abort);
         process.once("SIGTERM", abort);
-        const client = new GitHubClient({ baseUrl: config.apiBaseUrl, apiVersion: config.apiVersion, token: githubToken });
+        const client = new GitHubClient({ baseUrl: config.apiBaseUrl, graphqlUrl: config.graphqlUrl, apiVersion: config.apiVersion, token: githubToken });
         const emitter = new GitHubRelayEmitter({
             baseUrl: `http://127.0.0.1:${runtime.port}`,
             adminToken: runtime.token,
