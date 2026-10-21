@@ -279,14 +279,16 @@ test("real verification evidence parks and wakes one correlation-filtered notifi
     terminalChecks = true;
     const firstObservation = await runGitHubCycle({ ...runnerOptions, once: false });
     allSummaries.push(firstObservation);
+    assert.deepEqual(firstObservation.errors, [], `first terminal observation errors: ${JSON.stringify(firstObservation.errors)}`);
     assert.equal(firstObservation.emitted, 0);
     assert.equal(relay.store.snapshotAtHighWater().snapshot.events.filter((event) => event.type === "pr.verification.settled").length, 0);
 
     const secondObservation = await runGitHubCycle({ ...runnerOptions, once: false });
     allSummaries.push(secondObservation);
+    assert.deepEqual(secondObservation.errors, [], `second terminal observation errors: ${JSON.stringify(secondObservation.errors)}`);
     const firstEvents = relay.store.snapshotAtHighWater().snapshot.events;
     const firstVerificationEvents = firstEvents.filter((event) => event.type === "pr.verification.settled");
-    assert.equal(firstVerificationEvents.length, 1);
+    assert.equal(firstVerificationEvents.length, 1, `verification event boundary: summary=${JSON.stringify(secondObservation)} logs=${JSON.stringify(logs)} eventTypes=${JSON.stringify(firstEvents.map((event) => event.type))}`);
     assert.equal(firstVerificationEvents[0]?.correlationId, correlationId);
     const firstPayload = eventPayload(firstVerificationEvents[0]!);
     assert.equal(firstPayload.verdict, "action_required");
