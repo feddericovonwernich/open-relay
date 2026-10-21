@@ -220,7 +220,7 @@ Use the verification notification only after you pin the SonarQube identity.
 
 5. Add the verification mapping with the exact reviewer logins.
 
-   The fields below extend the existing connector configuration. Keep the existing Cursor Bugbot and Copilot trigger mappings. This example omits those trigger bodies.
+   The fields below extend the existing connector configuration. The existing Cursor Bugbot and Copilot trigger mappings remain required. This example omits those trigger bodies.
 
    ```json
    {

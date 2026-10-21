@@ -141,7 +141,7 @@ Copilot is a submitted pull-request review and therefore does not appear in
 
 5. Add this verification block with the exact reviewer logins.
 
-   The fields below extend the existing connector configuration. Keep the existing Cursor Bugbot and Copilot trigger mappings. This example omits those trigger bodies.
+   The fields below extend the existing connector configuration. The existing Cursor Bugbot and Copilot trigger mappings remain required. This example omits those trigger bodies.
 
    ```json
    {
