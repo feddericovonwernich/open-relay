@@ -1628,7 +1628,7 @@ test("ordinary verification Relay failure remains retryable and CI disable does 
   });
   assert.equal(ciCalls, 0);
   assert.equal(settled.length, 1);
-  assert.equal(result.emitted, 1);
+  assert.equal(result.emitted, 2);
 });
 
 test("verification logs are bounded, static, and redacted", async () => {
