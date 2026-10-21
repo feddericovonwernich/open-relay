@@ -1210,7 +1210,7 @@ test("verification eligibility gates automation, checks, and GraphQL evidence", 
     [],
     [checkRun(32, { status: "queued", conclusion: null, completedAt: null })],
     [checkRun(33, { status: "in_progress", conclusion: null, completedAt: null })],
-    [checkRun(34, { status: "completed", conclusion: null })],
+    [checkRun(34, { name: "", completedAt: null })],
   ] as const) {
     const calls: string[] = [];
     const emitted: PrVerificationSettled[] = [];
@@ -1240,8 +1240,9 @@ test("verification settles once after two identical observations and immediately
   });
   await continuous();
   assert.equal(continuousState.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 1);
-  assert.equal((await continuous()).emitted, 1);
-  assert.equal((await continuous()).emitted, 0);
+  await continuous();
+  assert.equal(continuousEmissions.length, 1);
+  await continuous();
   assert.equal(continuousEmissions.length, 1);
   assert.equal(continuousState.get("octo/repo")?.verificationObservations.get(7)?.emittedIdentities.size, 1);
 
@@ -1265,7 +1266,7 @@ test("verification final-head fence, head changes, and same-head identity retent
     state,
     verifyCurrentHead: async () => {
       verifierCalls += 1;
-      return verifierCalls < 5;
+      return verifierCalls < 4;
     },
   });
   await cycle();
@@ -1427,7 +1428,14 @@ test("verification identity changes settle every evidence and action mutation", 
     };
     const recognizers = artifactId === undefined && entry.changedCandidateId === undefined
       ? undefined
-      : { sonarqube: () => [candidateFor("sonar-v1", artifactId ?? entry.changedCandidateId ?? "artifact")] };
+      : {
+        sonarqube: () => {
+          const recognized = candidateFor("sonar-v1", artifactId ?? entry.changedCandidateId ?? "artifact");
+          return [entry.name === "configured artifact"
+            ? { ...recognized, artifact: { ...recognized.artifact, completedAt: "2026-01-01T00:00:00.000Z" } }
+            : recognized];
+        },
+      };
     const cycle = () => runGitHubCycle({
       config: verificationConfig,
       client,
@@ -1473,10 +1481,9 @@ test("verification GraphQL failures isolate low-level emissions and repository s
       client: verificationClient([checkRun(60)], [reviewThread()], calls),
       emitter: verificationEmitter(),
       state,
-      once: true,
       verifyCurrentHead: async () => true,
     });
-    const result = await runGitHubCycle({ config: verificationConfig, client, emitter, state, once: true, verifyCurrentHead: async () => true });
+    const result = await runGitHubCycle({ config: verificationConfig, client, emitter, state, verifyCurrentHead: async () => true });
     assert.equal(configured.length, 1);
     assert.equal(ci.length, 1);
     assert.equal(result.errors.length, 1);
