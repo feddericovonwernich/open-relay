@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runGitHubConnector, runGitHubCycle, type ConnectorSummary } from "../src/connectors/github/runner.ts";
+import { runGitHubConnector, runGitHubCycle, type ConnectorSummary, type GitHubCycleOptions } from "../src/connectors/github/runner.ts";
 import { GitHubRelayEmitterError, settledKey } from "../src/connectors/github/emitter.ts";
 import { GitHubClientError } from "../src/connectors/github/client.ts";
-import type { GitHubConnectorConfig, GitHubPullRequest, PrSnapshot, CompletionCandidate, TriggerConfig, GitHubCheckRun } from "../src/connectors/github/types.ts";
+import type { GitHubConnectorConfig, GitHubPullRequest, GitHubReviewThread, GitHubVerificationConfig, PrSnapshot, PrVerificationSettled, CompletionCandidate, TriggerConfig, GitHubCheckRun } from "../src/connectors/github/types.ts";
 
 const trigger = {
   id: "sonar-v1",
@@ -54,6 +54,7 @@ function clientFor(currentHead = "abc") {
     listOpenPullRequests: async () => [pullRequest],
     listRecentClosedPullRequests: async () => [],
     listReviews: async () => [],
+    listReviewThreads: async () => [],
     listCompletedCheckRuns: async () => [...snapshot.checkRuns],
     listCurrentCheckRuns: async () => [...snapshot.checkRuns],
     getPullRequest: async () => ({ ...pullRequest, headSha: currentHead }),
@@ -76,6 +77,53 @@ const combinedConfig: GitHubConnectorConfig = {
     mode: "configured-tools-and-generic-check-runs",
   }],
 };
+const verificationConfig: GitHubConnectorConfig = {
+  ...combinedConfig,
+  verification: {
+    id: "pr-verification-v1",
+    emit: { type: "pr.verification.settled", version: 1 },
+    reviewers: {
+      "cursor-bugbot": ["bugbot[bot]"],
+      "copilot-review": ["copilot[bot]"],
+    },
+  },
+};
+
+function reviewThread(overrides: Partial<GitHubReviewThread> = {}): GitHubReviewThread {
+  return {
+    id: "thread-1",
+    isResolved: false,
+    isOutdated: false,
+    path: "src/app.ts",
+    startLine: null,
+    line: 10,
+    commentCount: 2,
+    rootComment: {
+      id: "comment-1",
+      url: "https://github.com/octo/repo/pull/7#discussion_r1",
+      body: "Fix this issue",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      authorLogin: "bugbot[bot]",
+    },
+    ...overrides,
+  };
+}
+
+function verificationEmitter(
+  verification: PrVerificationSettled[] = [],
+  result: "emitted" | "replayed" = "emitted",
+) {
+  return {
+    emit: async () => "emitted" as const,
+    emitAggregate: async () => "emitted" as const,
+    emitCiSettled: async () => "emitted" as const,
+    emitVerification: async (_config: GitHubVerificationConfig, _snapshot: PrSnapshot, payload: PrVerificationSettled) => {
+      verification.push(payload);
+      return result;
+    },
+  };
+}
 
 test("combined mode emits configured tools and generic CI independently", async () => {
   const calls: string[] = [];
@@ -105,6 +153,7 @@ test("combined mode emits configured tools and generic CI independently", async 
         emissions.push("ci");
         return "emitted";
       },
+      emitVerification: async () => "emitted" as const,
     },
     once: true,
     verifyCurrentHead: async () => true,
@@ -132,6 +181,7 @@ test("pending generic checks do not suppress configured notifications", async ()
       emit: async () => { configured += 1; return "emitted"; },
       emitAggregate: async () => "emitted",
       emitCiSettled: async () => { ci += 1; return "emitted"; },
+      emitVerification: async () => "emitted" as const,
     },
     once: true,
     verifyCurrentHead: async () => true,
@@ -159,6 +209,7 @@ test("CI definition drift disables only combined CI settlement", async () => {
     emitCiSettled: async () => {
       throw new GitHubRelayEmitterError("ci_invalid", "missing CI definition", 404);
     },
+    emitVerification: async () => "emitted" as const,
   };
 
   const first = await runGitHubCycle({
@@ -192,6 +243,7 @@ test("continuous combined mode emits configured output before stable generic CI"
     emit: async () => { configured += 1; return "emitted" as const; },
     emitAggregate: async () => "emitted" as const,
     emitCiSettled: async () => { ci += 1; return "emitted" as const; },
+    emitVerification: async () => "emitted" as const,
   };
   const cycle = () => runGitHubCycle({
     config: combinedConfig,
@@ -226,6 +278,7 @@ test("combined discovery loads configured checks and reviews but skips current c
     listCompletedCheckRuns: async () => { calls.push("completed"); return [...snapshot.checkRuns]; },
     listCurrentCheckRuns: async () => { calls.push("current"); return [checkRun(24)]; },
     listReviews: async () => { calls.push("reviews"); return []; },
+    listReviewThreads: async () => { calls.push("review-threads"); return []; },
   };
   const result = await runGitHubCycle({
     config: { ...combinedConfig, triggers: [trigger, copilotTrigger] },
@@ -251,6 +304,7 @@ test("configured trigger drift does not suppress combined generic CI settlement"
       emit: async () => { throw new GitHubRelayEmitterError("trigger_invalid", "missing trigger", 404); },
       emitAggregate: async () => "emitted",
       emitCiSettled: async () => { ci += 1; return "emitted"; },
+      emitVerification: async () => "emitted" as const,
     },
     once: true,
     verifyCurrentHead: async () => true,
@@ -276,6 +330,7 @@ test("stale configured aggregate verification does not suppress combined generic
       emit: async () => "emitted",
       emitAggregate: async () => "emitted",
       emitCiSettled: async () => { ci += 1; return "emitted"; },
+      emitVerification: async () => "emitted" as const,
     },
     once: true,
     verifyCurrentHead: async () => {
@@ -313,6 +368,7 @@ function genericClient(
     listCompletedCheckRuns: async () => [],
     listCurrentCheckRuns: async (_repository: string, _headSha: string) => [...current()],
     listReviews: async () => [],
+    listReviewThreads: async () => [],
     getPullRequest: async (_repository: string, number: number) => ({ ...pullRequest, number }),
   };
 }
@@ -328,6 +384,7 @@ function genericEmitter(
       ci.push({ repository: snapshot.repository.fullName, checks });
       return result;
     },
+    emitVerification: async () => "emitted" as const,
   };
 }
 
@@ -339,6 +396,7 @@ test("generic mode bypasses configured recognizers and aggregate", async () => {
     listCompletedCheckRuns: async () => { calls.push("completed"); throw new Error("completed endpoint must not run"); },
     listCurrentCheckRuns: async () => { calls.push("current"); return [checkRun(2, { name: "SonarCloud Code Analysis", app: { id: 42, slug: "sonarcloud" } })]; },
     listReviews: async () => { calls.push("reviews"); return []; },
+    listReviewThreads: async () => { calls.push("review-threads"); return []; },
   };
   const result = await runGitHubCycle({
     config: { ...genericConfig, triggers: [trigger], aggregate: aggregateConfig.aggregate },
@@ -385,6 +443,7 @@ test("mixed repositories keep generic and configured paths independent", async (
       emit: async () => { configured += 1; return "emitted"; },
       emitAggregate: async () => "emitted",
       emitCiSettled: async () => { ci += 1; return "emitted"; },
+      emitVerification: async () => "emitted" as const,
     },
     once: true,
     verifyCurrentHead: async () => true,
@@ -641,7 +700,7 @@ test("one-shot runner recognizes and emits a current candidate", async () => {
   const result = await runGitHubConnector({
     config,
     client: clientFor(),
-    emitter: { emit: async (...args) => { calls.push(args); return "emitted"; }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
+    emitter: { emit: async (...args) => { calls.push(args); return "emitted"; }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted", emitVerification: async () => "emitted" },
     once: true,
     clock: () => Date.now(),
   });
@@ -659,6 +718,7 @@ test("targeted cycle directly loads only the selected pull request", async () =>
       listCompletedCheckRuns: async (_repository, headSha) => { calls.push(`checks:${headSha}`); return []; },
       listCurrentCheckRuns: async (_repository, headSha) => { calls.push(`current-checks:${headSha}`); return []; },
       listReviews: async () => [],
+      listReviewThreads: async () => [],
       getPullRequest: async (_repository, number) => { calls.push(`get:${number}`); return target; },
     },
     pullRequestNumber: 197,
@@ -676,6 +736,7 @@ test("both runner entry points validate targeted selection before repository acc
     listCompletedCheckRuns: async () => [],
     listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
+    listReviewThreads: async () => [],
     getPullRequest: async () => { calls.push("get"); return pullRequest; },
   };
   await assert.rejects(runGitHubCycle({ config, client, pullRequestNumber: 0 }), /positive safe integer/);
@@ -696,7 +757,7 @@ test("stale candidates are counted but never emitted", async () => {
   const result = await runGitHubCycle({
     config,
     client: clientFor("new-head"),
-    emitter: { emit: async () => { emitted = true; return "emitted"; }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
+    emitter: { emit: async () => { emitted = true; return "emitted"; }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted", emitVerification: async () => "emitted" },
   });
   assert.deepEqual(result, summary({ pullRequests: 1, candidates: 1, stale: 1 }));
   assert.equal(emitted, false);
@@ -733,6 +794,7 @@ test("trigger drift disables only that trigger for later cycles", async () => {
       },
       emitAggregate: async () => "emitted",
       emitCiSettled: async () => "emitted",
+      emitVerification: async () => "emitted" as const,
     },
     sleep: async () => {
       sleeps += 1;
@@ -777,6 +839,7 @@ test("all GitHub requests share a global concurrency ceiling of four", async () 
     listCompletedCheckRuns: async () => { await request(); return []; },
     listCurrentCheckRuns: async () => { await request(); return []; },
     listReviews: async () => { await request(); return []; },
+    listReviewThreads: async () => { await request(); return []; },
     getPullRequest: async () => { await request(); return pullRequest; },
   };
   const result = await runGitHubCycle({ config: { ...config, repositories: repositories.map((name) => ({ name, mode: "configured-tools" as const })) }, client, discover: true });
@@ -796,6 +859,7 @@ test("fatal GitHub auth aborts sibling repository requests", async () => {
     listCompletedCheckRuns: async () => [],
     listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
+    listReviewThreads: async () => [],
     getPullRequest: async () => pullRequest,
   };
   await assert.rejects(runGitHubCycle({
@@ -826,6 +890,7 @@ test("caller abort returns an accumulated summary after in-flight requests stop"
     listCompletedCheckRuns: async () => [],
     listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
+    listReviewThreads: async () => [],
     getPullRequest: async () => pullRequest,
   };
   const running = runGitHubCycle({ config, client, signal: controller.signal });
@@ -839,7 +904,7 @@ test("Relay credential rejection is fatal", async () => {
   await assert.rejects(runGitHubCycle({
     config,
     client: clientFor(),
-    emitter: { emit: async () => { throw new GitHubRelayEmitterError("credential_failed", "runtime rejected", 401); }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
+    emitter: { emit: async () => { throw new GitHubRelayEmitterError("credential_failed", "runtime rejected", 401); }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted", emitVerification: async () => "emitted" },
   }), /runtime rejected/);
 });
 
@@ -858,6 +923,7 @@ test("transient backoff skips only an ineligible repository on the next cycle", 
     listCompletedCheckRuns: async () => [],
     listCurrentCheckRuns: async () => [],
     listReviews: async () => [],
+    listReviewThreads: async () => [],
     getPullRequest: async () => pullRequest,
   };
   const cycleOptions = {
@@ -888,7 +954,7 @@ test("head verification transient failure enters repository backoff", async () =
     client: clientFor(),
     state,
     now: () => 0,
-    emitter: { emit: async () => "emitted", emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
+    emitter: { emit: async () => "emitted", emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted", emitVerification: async () => "emitted" },
     verifyCurrentHead: async () => { throw new GitHubClientError("github_transient_error", "head unavailable"); },
   });
   assert.equal(result.emitted, 0);
@@ -901,7 +967,7 @@ test("trigger drift stops remaining candidates for that trigger", async () => {
     config,
     client: clientFor(),
     recognizers: { sonarqube: () => [candidate("one"), candidate("two")] },
-    emitter: { emit: async () => { emissions += 1; throw new GitHubRelayEmitterError("trigger_drift", "drift"); }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted" },
+    emitter: { emit: async () => { emissions += 1; throw new GitHubRelayEmitterError("trigger_drift", "drift"); }, emitAggregate: async () => "emitted", emitCiSettled: async () => "emitted", emitVerification: async () => "emitted" },
   });
   assert.equal(emissions, 1);
   assert.equal(result.candidates, 1);
@@ -927,6 +993,7 @@ test("emits aggregate only after every trigger has a current-head candidate", as
       return "emitted" as const;
     },
     emitCiSettled: async () => "emitted" as const,
+    emitVerification: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -952,6 +1019,7 @@ test("suppresses aggregate emission when its final head verification is stale", 
       return "emitted" as const;
     },
     emitCiSettled: async () => "emitted" as const,
+    emitVerification: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -988,6 +1056,7 @@ test("aggregate mapping failures disable only aggregate emission across connecto
       throw new GitHubRelayEmitterError("aggregate_invalid", "unknown aggregate", 404);
     },
     emitCiSettled: async () => "emitted" as const,
+    emitVerification: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -1027,6 +1096,7 @@ test("aggregate drift disables aggregate across cycles while individuals continu
       throw new GitHubRelayEmitterError("aggregate_drift", "mapping drift", 409);
     },
     emitCiSettled: async () => "emitted" as const,
+    emitVerification: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", "sonar-1")],
@@ -1062,6 +1132,7 @@ test("changed same-head aggregate membership produces a new aggregate", async ()
       return "emitted" as const;
     },
     emitCiSettled: async () => "emitted" as const,
+    emitVerification: async () => "emitted" as const,
   };
   const recognizers = {
     sonarqube: () => [candidateFor("sonar-v1", artifactId)],
@@ -1072,4 +1143,533 @@ test("changed same-head aggregate membership produces a new aggregate", async ()
   await runGitHubCycle({ config: aggregateConfig, client: clientFor(), emitter, recognizers });
   assert.deepEqual(members, [["one", "bugbot-1"], ["two", "bugbot-1"]]);
   assert.notEqual(keys[0], keys[1]);
+});
+function verificationClient(
+  checks: readonly GitHubCheckRun[] = [checkRun(30, { name: "Build" })],
+  threads: readonly GitHubReviewThread[] = [],
+  calls: string[] = [],
+  head = "abc",
+) {
+  return {
+    ...clientFor(head),
+    listOpenPullRequests: async () => [{ ...pullRequest, headSha: head }],
+    listCompletedCheckRuns: async () => [...snapshot.checkRuns],
+    listCurrentCheckRuns: async () => {
+      calls.push("current");
+      return [...checks];
+    },
+    listReviewThreads: async () => {
+      calls.push("graphql");
+      return [...threads];
+    },
+  };
+}
+
+function verificationCycle(
+  client: GitHubCycleOptions["client"],
+  emitter: NonNullable<GitHubCycleOptions["emitter"]>,
+  state = new Map(),
+  overrides: Partial<GitHubCycleOptions> = {},
+) {
+  return runGitHubCycle({
+    config: verificationConfig,
+    client,
+    emitter,
+    state,
+    once: true,
+    verifyCurrentHead: async () => true,
+    ...overrides,
+  });
+}
+
+test("verification eligibility gates automation, checks, and GraphQL evidence", async () => {
+  const state = new Map();
+  const pendingAutomationCalls: string[] = [];
+  const pendingAutomationEmissions: PrVerificationSettled[] = [];
+  await runGitHubCycle({
+    config: verificationConfig,
+    client: verificationClient([checkRun(31)], [reviewThread()], pendingAutomationCalls),
+    emitter: verificationEmitter(),
+    state,
+    once: true,
+  });
+  pendingAutomationCalls.length = 0;
+  const pendingAutomation = await runGitHubCycle({
+    config: verificationConfig,
+    client: verificationClient([checkRun(31)], [], pendingAutomationCalls),
+    emitter: verificationEmitter(pendingAutomationEmissions),
+    state,
+    recognizers: { sonarqube: () => [] },
+  });
+  assert.equal(pendingAutomation.emitted, 0);
+  assert.equal(pendingAutomationCalls.includes("graphql"), false);
+  assert.equal(pendingAutomationEmissions.length, 0);
+  assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 0);
+
+  for (const checks of [
+    [],
+    [checkRun(32, { status: "queued", conclusion: null, completedAt: null })],
+    [checkRun(33, { status: "in_progress", conclusion: null, completedAt: null })],
+    [checkRun(34, { status: "completed", conclusion: null })],
+  ] as const) {
+    const calls: string[] = [];
+    const emitted: PrVerificationSettled[] = [];
+    const result = await runGitHubCycle({
+      config: verificationConfig,
+      client: verificationClient(checks, [], calls),
+      emitter: verificationEmitter(emitted),
+      state: new Map(),
+      once: true,
+    });
+    assert.equal(result.emitted, 0);
+    assert.equal(calls.includes("graphql"), false);
+    assert.equal(emitted.length, 0);
+  }
+});
+
+test("verification settles once after two identical observations and immediately in once mode", async () => {
+  const continuousState = new Map();
+  const continuousEmissions: PrVerificationSettled[] = [];
+  const continuousEmitter = verificationEmitter(continuousEmissions);
+  const continuousClient = verificationClient([checkRun(35)], [reviewThread()]);
+  const continuous = () => runGitHubCycle({
+    config: verificationConfig,
+    client: continuousClient,
+    emitter: continuousEmitter,
+    state: continuousState,
+    verifyCurrentHead: async () => true,
+  });
+  assert.equal((await continuous()).emitted, 0);
+  assert.equal(continuousState.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 1);
+  assert.equal((await continuous()).emitted, 1);
+  assert.equal((await continuous()).emitted, 0);
+  assert.equal(continuousEmissions.length, 1);
+  assert.equal(continuousState.get("octo/repo")?.verificationObservations.get(7)?.emittedIdentities.size, 1);
+
+  const onceEmissions: PrVerificationSettled[] = [];
+  const once = await verificationCycle(
+    verificationClient([checkRun(36)], [reviewThread()]),
+    verificationEmitter(onceEmissions),
+  );
+  assert.equal(once.emitted, 1);
+  assert.equal(onceEmissions.length, 1);
+});
+
+test("verification final-head fence, head changes, and same-head identity retention are isolated", async () => {
+  const state = new Map();
+  let verify = true;
+  const emissions: PrVerificationSettled[] = [];
+  const cycle = () => runGitHubCycle({
+    config: verificationConfig,
+    client: verificationClient([checkRun(37)], [reviewThread()]),
+    emitter: verificationEmitter(emissions),
+    state,
+    verifyCurrentHead: async () => verify,
+  });
+  await cycle();
+  verify = false;
+  const stale = await cycle();
+  assert.equal(stale.stale, 1);
+  assert.equal(stale.emitted, 0);
+  assert.equal(emissions.length, 0);
+  assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 0);
+
+  verify = true;
+  const retainedState = new Map();
+  let checks: readonly GitHubCheckRun[] = [checkRun(38)];
+  const retained: PrVerificationSettled[] = [];
+  const retainedCycle = () => verificationCycle(
+    verificationClient(checks, [], [], "abc"),
+    verificationEmitter(retained),
+    retainedState,
+    { once: false },
+  );
+  await retainedCycle();
+  await retainedCycle();
+  checks = [checkRun(38), checkRun(39)];
+  await retainedCycle();
+  await retainedCycle();
+  checks = [checkRun(38)];
+  await retainedCycle();
+  await retainedCycle();
+  assert.equal(retained.length, 2);
+  assert.equal(retainedState.get("octo/repo")?.verificationObservations.get(7)?.emittedIdentities.size, 2);
+
+  let head = "abc";
+  const headState = new Map();
+  const headEmissions: PrVerificationSettled[] = [];
+  const headCycle = () => runGitHubCycle({
+    config: verificationConfig,
+    client: verificationClient([checkRun(40, { headSha: head })], [], [], head),
+    emitter: verificationEmitter(headEmissions),
+    state: headState,
+    once: false,
+  });
+  await headCycle();
+  await headCycle();
+  assert.equal(headState.get("octo/repo")?.verificationObservations.get(7)?.emittedIdentities.size, 1);
+  head = "def";
+  await headCycle();
+  const afterHead = headState.get("octo/repo")?.verificationObservations.get(7);
+  assert.equal(afterHead?.headSha, "def");
+  assert.equal(afterHead?.consecutive, 1);
+  assert.equal(afterHead?.emittedIdentities.size, 0);
+});
+
+test("missing pull requests remove verification observations", async () => {
+  const state = new Map();
+  let present = true;
+  const client = {
+    ...verificationClient([checkRun(41)], [reviewThread()]),
+    listOpenPullRequests: async () => present ? [pullRequest] : [],
+  };
+  const emitter = verificationEmitter();
+  await runGitHubCycle({ config: verificationConfig, client, emitter, state });
+  assert.equal(state.get("octo/repo")?.verificationObservations.has(7), true);
+  present = false;
+  await runGitHubCycle({ config: verificationConfig, client, emitter, state });
+  assert.equal(state.get("octo/repo")?.verificationObservations.has(7), false);
+});
+
+test("non-verification repositories preserve REST behavior and never request GraphQL", async () => {
+  const cases: Array<{ config: GitHubConnectorConfig; discover?: boolean; expected: string[] }> = [
+    { config, expected: ["completed"] },
+    { config: genericConfig, expected: ["current"] },
+    { config: combinedConfig, expected: ["completed", "current"] },
+    { config: verificationConfig, discover: true, expected: ["completed"] },
+  ];
+  for (const entry of cases) {
+    const calls: string[] = [];
+    const client = {
+      ...verificationClient([checkRun(42)], [], calls),
+      listCompletedCheckRuns: async () => { calls.push("completed"); return [...snapshot.checkRuns]; },
+      listCurrentCheckRuns: async () => { calls.push("current"); return [checkRun(42)]; },
+      listReviewThreads: async () => { calls.push("graphql"); return []; },
+    };
+    await runGitHubCycle({
+      config: entry.config,
+      client,
+      emitter: verificationEmitter(),
+      once: true,
+      discover: entry.discover,
+    });
+    assert.equal(calls.includes("graphql"), false, JSON.stringify(entry.config.repositories));
+    for (const call of entry.expected) assert.equal(calls.includes(call), true);
+  }
+
+  const mixed: GitHubConnectorConfig = {
+    ...verificationConfig,
+    repositories: [
+      { name: "octo/configured", mode: "configured-tools" },
+      { name: "octo/verified", mode: "configured-tools-and-generic-check-runs" },
+    ],
+  };
+  const graphqlRepositories: string[] = [];
+  const mixedClient = {
+    ...verificationClient(),
+    listOpenPullRequests: async (repository: string) => [{ ...pullRequest, repositoryFullName: repository }],
+    listReviewThreads: async (repository: string) => { graphqlRepositories.push(repository); return []; },
+  };
+  await runGitHubCycle({ config: mixed, client: mixedClient, emitter: verificationEmitter(), once: true });
+  assert.deepEqual(graphqlRepositories, ["octo/verified"]);
+});
+
+test("verification runs after configured and generic emissions", async () => {
+  const events: string[] = [];
+  const client = {
+    ...verificationClient([checkRun(43)], [reviewThread()]),
+    listCompletedCheckRuns: async () => { events.push("completed"); return [...snapshot.checkRuns]; },
+    listCurrentCheckRuns: async () => { events.push("current"); return [checkRun(43)]; },
+    listReviewThreads: async () => { events.push("graphql"); return [reviewThread()]; },
+  };
+  const emitter = {
+    ...verificationEmitter(),
+    emit: async () => { events.push("configured"); return "emitted" as const; },
+    emitCiSettled: async () => { events.push("ci"); return "emitted" as const; },
+    emitVerification: async () => { events.push("verification"); return "emitted" as const; },
+  };
+  await runGitHubCycle({ config: verificationConfig, client, emitter, once: true, verifyCurrentHead: async () => true });
+  assert.deepEqual(events, ["completed", "current", "configured", "ci", "graphql", "verification"]);
+});
+
+test("verification identity changes settle every evidence and action mutation", async () => {
+  const cases: Array<{
+    name: string;
+    initialChecks: GitHubCheckRun[];
+    changedChecks: GitHubCheckRun[];
+    initialThreads?: GitHubReviewThread[];
+    changedThreads?: GitHubReviewThread[];
+    candidateId?: string;
+    changedCandidateId?: string;
+  }> = [
+    { name: "late check run", initialChecks: [checkRun(50)], changedChecks: [checkRun(50), checkRun(51)] },
+    { name: "disappeared check run", initialChecks: [checkRun(50), checkRun(51)], changedChecks: [checkRun(50)] },
+    { name: "conclusion", initialChecks: [checkRun(52)], changedChecks: [checkRun(52, { conclusion: "failure" })] },
+    { name: "completion timestamp", initialChecks: [checkRun(53)], changedChecks: [checkRun(53, { completedAt: "2026-01-02T00:00:00.000Z" })] },
+    { name: "URL", initialChecks: [checkRun(54)], changedChecks: [checkRun(54, { detailsUrl: "https://checks/changed" })] },
+    { name: "configured artifact", initialChecks: [checkRun(55)], changedChecks: [checkRun(55)], candidateId: "old", changedCandidateId: "new" },
+    { name: "new thread", initialChecks: [checkRun(56)], changedChecks: [checkRun(56)], initialThreads: [], changedThreads: [reviewThread()] },
+    { name: "resolved thread", initialChecks: [checkRun(57)], changedChecks: [checkRun(57)], initialThreads: [reviewThread()], changedThreads: [reviewThread({ isResolved: true })] },
+    { name: "edited thread", initialChecks: [checkRun(58)], changedChecks: [checkRun(58)], initialThreads: [reviewThread()], changedThreads: [reviewThread({ rootComment: { ...reviewThread().rootComment, body: "edited" } })] },
+    { name: "action output", initialChecks: [checkRun(59, { name: "build" })], changedChecks: [checkRun(59, { name: "lint", conclusion: "failure" })] },
+  ];
+  for (const entry of cases) {
+    let checks = entry.initialChecks;
+    let threads = entry.initialThreads ?? [];
+    let artifactId = entry.candidateId;
+    const state = new Map();
+    const emissions: PrVerificationSettled[] = [];
+    const emitter = verificationEmitter(emissions);
+    const client = {
+      ...verificationClient(),
+      listCurrentCheckRuns: async () => [...checks],
+      listReviewThreads: async () => [...threads],
+    };
+    const recognizers = artifactId === undefined && entry.changedCandidateId === undefined
+      ? undefined
+      : { sonarqube: () => [candidateFor("sonar-v1", artifactId ?? entry.changedCandidateId ?? "artifact")] };
+    const cycle = () => runGitHubCycle({
+      config: verificationConfig,
+      client,
+      emitter,
+      state,
+      recognizers,
+      verifyCurrentHead: async () => true,
+    });
+    await cycle();
+    await cycle();
+    checks = entry.changedChecks;
+    threads = entry.changedThreads ?? threads;
+    artifactId = entry.changedCandidateId ?? artifactId;
+    await cycle();
+    await cycle();
+    assert.equal(emissions.length, 2, entry.name);
+  }
+});
+
+test("verification GraphQL failures isolate low-level emissions and repository state", async () => {
+  const failures = [
+    new GitHubClientError("github_protocol_error", "malformed GraphQL response"),
+    new GitHubClientError("github_transient_error", "GraphQL unavailable"),
+    new GitHubClientError("github_protocol_error", "GitHub GraphQL endpoint was not found", 404),
+  ];
+  for (const failure of failures) {
+    const state = new Map();
+    const calls: string[] = [];
+    const configured: CompletionCandidate[] = [];
+    const ci: GitHubCheckRun[] = [];
+    const emitter = {
+      ...verificationEmitter(),
+      emit: async (_trigger: TriggerConfig, _snapshot: PrSnapshot, candidate: CompletionCandidate) => { configured.push(candidate); return "emitted" as const; },
+      emitCiSettled: async (_snapshot: PrSnapshot, checks: readonly GitHubCheckRun[]) => { ci.push(...checks); return "emitted" as const; },
+      emitVerification: async () => { throw failure; },
+    };
+    const client = {
+      ...verificationClient([checkRun(60)], [reviewThread()], calls),
+      listReviewThreads: async () => { calls.push("graphql"); throw failure; },
+    };
+    const result = await runGitHubCycle({ config: verificationConfig, client, emitter, state, once: true });
+    assert.equal(configured.length, 1);
+    assert.equal(ci.length, 1);
+    assert.equal(result.errors.length, 1);
+    assert.equal(state.get("octo/repo")?.disabled, false);
+    assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 0);
+    if (failure.status === 404) {
+      await runGitHubCycle({ config: verificationConfig, client: verificationClient([checkRun(60)], [], calls), emitter: verificationEmitter(), state, once: true });
+      assert.equal(calls.filter((call) => call === "current").length >= 2, true);
+    }
+  }
+});
+
+test("verification payload bounds, transient backoff, and authentication are explicit", async () => {
+  let relayCalls = 0;
+  const payloadState = new Map();
+  const oversized = reviewThread({ rootComment: { ...reviewThread().rootComment, body: "x".repeat(70_000) } });
+  const payloadEmitter = {
+    ...verificationEmitter(),
+    emitVerification: async () => { relayCalls += 1; return "emitted" as const; },
+  };
+  const payloadResult = await runGitHubCycle({
+    config: verificationConfig,
+    client: verificationClient([checkRun(61)], [oversized]),
+    emitter: payloadEmitter,
+    state: payloadState,
+    once: true,
+  });
+  assert.equal(relayCalls, 0);
+  assert.equal(payloadResult.errors.some((error) => error.startsWith("verification_payload_too_large:")), true);
+  assert.equal(payloadResult.emitted, 2);
+
+  let now = 0;
+  let graphqlCalls = 0;
+  const backoffState = new Map();
+  const transientClient = {
+    ...verificationClient([checkRun(62)], [reviewThread()]),
+    listReviewThreads: async () => {
+      graphqlCalls += 1;
+      if (graphqlCalls === 1) throw new GitHubClientError("github_transient_error", "temporary GraphQL failure");
+      return [reviewThread()];
+    },
+  };
+  const backoffOptions = {
+    config: verificationConfig,
+    client: transientClient,
+    emitter: verificationEmitter(),
+    state: backoffState,
+    now: () => now,
+  };
+  await runGitHubCycle(backoffOptions);
+  assert.equal(backoffState.get("octo/repo")?.verificationTransientDelay, 5_000);
+  now = 1_000;
+  await runGitHubCycle(backoffOptions);
+  assert.equal(graphqlCalls, 1);
+  now = 5_000;
+  await runGitHubCycle(backoffOptions);
+  assert.equal(graphqlCalls, 2);
+  assert.equal(backoffState.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 1);
+
+  await assert.rejects(runGitHubCycle({
+    config: verificationConfig,
+    client: {
+      ...verificationClient([checkRun(63)], [reviewThread()]),
+      listReviewThreads: async () => { throw new GitHubClientError("github_auth_failed", "bad GraphQL token", 401); },
+    },
+    emitter: verificationEmitter(),
+    once: true,
+  }), /bad GraphQL token/);
+});
+
+test("verification disable sets isolate invalid and drift outcomes", async () => {
+  const disabled = new Set<string>();
+  const bad = "octo/bad";
+  const good = "octo/good";
+  const configWithTwo: GitHubConnectorConfig = {
+    ...verificationConfig,
+    repositories: [
+      { name: bad, mode: "configured-tools-and-generic-check-runs" },
+      { name: good, mode: "configured-tools-and-generic-check-runs" },
+    ],
+  };
+  let verificationCalls = 0;
+  const client = {
+    ...verificationClient([checkRun(64)], [reviewThread()]),
+    listOpenPullRequests: async (repository: string) => [{ ...pullRequest, repositoryFullName: repository }],
+    listReviewThreads: async () => [reviewThread()],
+  };
+  const emitter = {
+    ...verificationEmitter(),
+    emitVerification: async (_config: GitHubVerificationConfig, snapshot: PrSnapshot) => {
+      verificationCalls += 1;
+      if (snapshot.repository.fullName === bad) {
+        throw new GitHubRelayEmitterError("verification_invalid", "verification mapping failed", 404);
+      }
+      return "emitted" as const;
+    },
+  };
+  const first = await runGitHubCycle({ config: configWithTwo, client, emitter, once: true, disabledVerificationRepositories: disabled });
+  assert.deepEqual([...disabled], [bad]);
+  assert.equal(first.errors.some((error) => error.startsWith("verification_invalid:")), true);
+  assert.equal(verificationCalls, 2);
+  const second = await runGitHubCycle({ config: configWithTwo, client, emitter, once: true, disabledVerificationRepositories: disabled });
+  assert.equal(second.errors.length, 0);
+  assert.equal(verificationCalls, 3);
+});
+
+test("ordinary verification Relay failure remains retryable and CI disable does not suppress verification", async () => {
+  const state = new Map();
+  let attempts = 0;
+  const emitter = {
+    ...verificationEmitter(),
+    emitVerification: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("temporary Relay failure");
+      return "emitted" as const;
+    },
+  };
+  const cycle = () => runGitHubCycle({
+    config: verificationConfig,
+    client: verificationClient([checkRun(65)], [reviewThread()]),
+    emitter,
+    state,
+    verifyCurrentHead: async () => true,
+  });
+  await cycle();
+  const failed = await cycle();
+  assert.equal(failed.errors.some((error) => error.includes("temporary Relay failure")), true);
+  assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 2);
+  await cycle();
+  assert.equal(attempts, 2);
+
+  const disabledCiRepositories = new Set(["octo/repo"]);
+  let ciCalls = 0;
+  const settled: PrVerificationSettled[] = [];
+  const result = await runGitHubCycle({
+    config: verificationConfig,
+    client: verificationClient([checkRun(66)], [reviewThread()]),
+    emitter: {
+      ...verificationEmitter(settled),
+      emitCiSettled: async () => { ciCalls += 1; return "emitted"; },
+      emitVerification: async () => "emitted" as const,
+    },
+    disabledCiRepositories,
+    once: true,
+  });
+  assert.equal(ciCalls, 0);
+  assert.equal(settled.length, 1);
+  assert.equal(result.emitted, 1);
+});
+
+test("verification logs are bounded, static, and redacted", async () => {
+  const logs: Record<string, unknown>[] = [];
+  const state = new Map();
+  let checks: readonly GitHubCheckRun[] = [checkRun(67)];
+  let threads: readonly GitHubReviewThread[] = [reviewThread()];
+  const client = {
+    ...verificationClient(),
+    listCurrentCheckRuns: async () => [...checks],
+    listReviewThreads: async () => [...threads],
+  };
+  const options = {
+    config: verificationConfig,
+    client,
+    emitter: verificationEmitter(),
+    state,
+    log: (line: string) => logs.push(JSON.parse(line) as Record<string, unknown>),
+    verifyCurrentHead: async () => true,
+  };
+  threads = [];
+  await runGitHubCycle({ ...options, recognizers: { sonarqube: () => [] } });
+  checks = [];
+  await runGitHubCycle({ ...options, recognizers: undefined });
+  threads = [reviewThread()];
+  checks = [checkRun(67)];
+  await runGitHubCycle(options);
+  await runGitHubCycle(options);
+  const replayLogs: Record<string, unknown>[] = [];
+  await runGitHubCycle({
+    ...options,
+    state: new Map(),
+    once: true,
+    log: (line: string) => replayLogs.push(JSON.parse(line) as Record<string, unknown>),
+    emitter: verificationEmitter([], "replayed"),
+  });
+  const errorLogs: Record<string, unknown>[] = [];
+  await runGitHubCycle({
+    ...options,
+    once: true,
+    log: (line: string) => errorLogs.push(JSON.parse(line) as Record<string, unknown>),
+    client: { ...client, listReviewThreads: async () => { throw new GitHubClientError("github_protocol_error", "protocol failure"); } },
+  });
+  const all = [...logs, ...replayLogs, ...errorLogs];
+  const events = new Set(all.map((entry) => entry.event));
+  for (const event of ["verification_pending_automation", "verification_pending_checks", "verification_pending_stability", "verification_emitted", "verification_replayed", "verification_error"]) {
+    assert.equal(events.has(event), true, event);
+  }
+  for (const record of all) {
+    assert.equal(record.repository, "octo/repo");
+    assert.equal(record.pullRequest, 7);
+    assert.equal(record.headSha, "abc");
+  }
+  const serialized = JSON.stringify(all);
+  for (const secret of ["Fix this issue", "github-token", "relay-token", "producer-token"]) assert.equal(serialized.includes(secret), false);
 });
