@@ -239,7 +239,7 @@ export interface PrVerificationSettled {
   pullRequest: { number: number; url: string; headSha: string; baseRef: string };
   verdict: "success" | "action_required";
   automation: { artifacts: PrAutomationSettledArtifact[] };
-  ci: PrCiSettled & { failingCheckNames: string[] };
+  ci: { outcome: "success" | "failure"; checks: PrCiSettledCheck[]; failingCheckNames: string[] };
   reviews: {
     unresolvedCount: number;
     includedCount: number;

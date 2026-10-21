@@ -224,7 +224,7 @@ test("real verification evidence parks and wakes one correlation-filtered notifi
   };
 
   const allSummaries: Array<{ errors: string[] }> = [];
-  const runLog = (value: string): void => logs.push(value);
+  const runLog = (value: string): void => { logs.push(value); };
   const captureRelayRequest = (request: { url?: string; headers: Record<string, string | string[] | undefined> }): void => {
     if (request.url === "/v1/events" && typeof request.headers.authorization === "string") relayTokens.push(request.headers.authorization.replace(/^Bearer /, ""));
     if (request.url === "/v1/notification/poll") notifyPollStarted.resolve();
