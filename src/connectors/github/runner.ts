@@ -511,6 +511,7 @@ async function runRepository(
             payload = normalizeVerification(snapshot, options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []), checks, threads, verification);
           } catch (error) {
             const code = error instanceof GitHubVerificationError ? error.code : "verification_error";
+            clearVerificationObservation(state, number, snapshot.pullRequest.headSha);
             summary.errors.push(`${code}: ${errorText(error)}`);
             logVerification(options.log, "verification_error", snapshot, code);
             continue;
@@ -520,6 +521,7 @@ async function runRepository(
             identity = verificationKey(payload);
           } catch (error) {
             const code = error instanceof GitHubVerificationError ? error.code : "verification_error";
+            clearVerificationObservation(state, number, snapshot.pullRequest.headSha);
             summary.errors.push(`${code}: ${errorText(error)}`);
             logVerification(options.log, "verification_error", snapshot, code);
             continue;
