@@ -139,7 +139,9 @@ Copilot is a submitted pull-request review and therefore does not appear in
 
 4. Set `graphqlUrl` to `https://ghe.example/api/graphql` for GitHub Enterprise. Use `https://api.github.com/graphql` for public GitHub.
 
-5. Add this verification block with the exact reviewer logins:
+5. Add this verification block with the exact reviewer logins.
+
+   The fields below extend the existing connector configuration. Keep the existing Cursor Bugbot and Copilot trigger mappings. This example omits those trigger bodies.
 
    ```json
    {
