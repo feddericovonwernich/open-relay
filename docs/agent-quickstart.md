@@ -127,6 +127,8 @@ Copilot is a submitted pull-request review and therefore does not appear in
 
 ### Verification notification procedure
 
+Public GitHub uses `https://api.github.com/graphql` by default.
+
 1. Run discovery.
 
    ```bash
@@ -137,7 +139,7 @@ Copilot is a submitted pull-request review and therefore does not appear in
 
 3. Set the repository mode to `configured-tools-and-generic-check-runs`.
 
-4. Set `graphqlUrl` to `https://ghe.example/api/graphql` for GitHub Enterprise. Use `https://api.github.com/graphql` for public GitHub.
+4. For GitHub Enterprise, set `graphqlUrl` to `https://ghe.example/api/graphql`.
 
 5. Add this verification block with the exact reviewer logins.
 

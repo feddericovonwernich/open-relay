@@ -206,6 +206,8 @@ See [`examples/github-pr-automation`](examples/github-pr-automation) and the [Gi
 
 Use the verification notification only after you pin the SonarQube identity.
 
+Public GitHub uses `https://api.github.com/graphql` by default.
+
 1. Run discovery with a read-only GitHub token.
 
    ```bash
@@ -216,7 +218,7 @@ Use the verification notification only after you pin the SonarQube identity.
 
 3. Set the repository mode to `configured-tools-and-generic-check-runs`.
 
-4. Set `graphqlUrl` to `https://ghe.example/api/graphql` for GitHub Enterprise. Use the public default `https://api.github.com/graphql` otherwise.
+4. For GitHub Enterprise, set `graphqlUrl` to `https://ghe.example/api/graphql`.
 
 5. Add the verification mapping with the exact reviewer logins.
 
