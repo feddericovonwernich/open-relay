@@ -34,6 +34,22 @@ function validConfig() {
     ],
   };
 }
+function verificationConfig() {
+  const value = validConfig();
+  value.repositories[0] = {
+    name: "owner/repository",
+    mode: "configured-tools-and-generic-check-runs",
+  } as never;
+  (value as Record<string, unknown>).verification = {
+    id: "pr-verification-settled-v1",
+    emit: { type: "pr.verification.settled", version: 1 },
+    reviewers: {
+      "cursor-bugbot": ["Cursor[bot]"],
+      "copilot-review": ["Copilot-Pull-Request-Reviewer[bot]"],
+    },
+  };
+  return value;
+}
 
 function errorWithCode(code: string) {
   return (error: unknown) =>
@@ -90,8 +106,14 @@ test("rejects secret-like keys at every nesting level", () => {
   const nested = validConfig();
   (nested.triggers[0].match as Record<string, unknown>).secret = "nope";
   assert.throws(() => validateGitHubConnectorConfig(nested), errorWithCode("secret_key"));
-});
 
+  const verification = verificationConfig();
+  ((verification as Record<string, unknown>).verification as Record<string, unknown>).reviewers = {
+    secret: ["nope"],
+  };
+  assert.throws(() => validateGitHubConnectorConfig(verification), errorWithCode("secret_key"));
+
+});
 test("accepts tokenEnv but never a token value", () => {
   const config = validateGitHubConnectorConfig({ ...validConfig(), tokenEnv: "MY_GITHUB_TOKEN" });
   assert.equal(config.tokenEnv, "MY_GITHUB_TOKEN");
@@ -196,6 +218,28 @@ test("accepts and freezes combined configured-tool and generic Check Run mode", 
     id: "settled-v1",
     emit: { type: "pr.automation.settled", version: 1 },
   });
+});
+
+test("accepts verification, defaults GraphQL, and freezes reviewer configuration", () => {
+  const config = validateGitHubConnectorConfig(verificationConfig());
+  assert.equal(config.graphqlUrl, "https://api.github.com/graphql");
+  assert.deepEqual(config.verification?.reviewers, {
+    "cursor-bugbot": ["cursor[bot]"],
+    "copilot-review": ["copilot-pull-request-reviewer[bot]"],
+  });
+  assert.equal(Object.isFrozen(config.verification), true);
+  assert.equal(Object.isFrozen(config.verification?.reviewers["cursor-bugbot"]), true);
+
+  const disabled = validateGitHubConnectorConfig(validConfig());
+  assert.equal(Object.hasOwn(disabled, "graphqlUrl"), false);
+  assert.equal(Object.hasOwn(disabled, "verification"), false);
+
+  const local = verificationConfig() as Record<string, unknown>;
+  local.apiBaseUrl = "http://127.0.0.1:8787";
+  local.graphqlUrl = "http://127.0.0.1:8788/graphql";
+  const localConfig = validateGitHubConnectorConfig(local, { allowLoopbackHttp: true });
+  assert.equal(localConfig.apiBaseUrl, "http://127.0.0.1:8787");
+  assert.equal(localConfig.graphqlUrl, "http://127.0.0.1:8788/graphql");
 });
 
 test("combined mode requires configured triggers", () => {
@@ -338,4 +382,85 @@ test("rejects aggregate IDs that collide with triggers or secret-like aggregate 
 
   const secret = { ...validConfig(), aggregate: { id: "settled-v1", emit: { type: "settled", version: 1 }, secret: "nope" } };
   assert.throws(() => validateGitHubConnectorConfig(secret), errorWithCode("secret_key"));
+});
+
+test("requires a combined repository when verification is configured", () => {
+  const value = verificationConfig() as Record<string, unknown>;
+  value.repositories = [{ name: "owner/repository", mode: "configured-tools" }];
+  assert.throws(() => validateGitHubConnectorConfig(value), errorWithCode("verification_mode"));
+});
+
+test("rejects verification IDs that collide with triggers or aggregate IDs", () => {
+  const triggerCollision = verificationConfig() as Record<string, unknown>;
+  (triggerCollision.verification as Record<string, unknown>).id = "sonar-v1";
+  assert.throws(() => validateGitHubConnectorConfig(triggerCollision), errorWithCode("verification_id_duplicate"));
+
+  const aggregateCollision = verificationConfig() as Record<string, unknown>;
+  (aggregateCollision.verification as Record<string, unknown>).id = "settled-v1";
+  aggregateCollision.aggregate = {
+    id: "settled-v1",
+    emit: { type: "pr.automation.settled", version: 1 },
+  };
+  assert.throws(() => validateGitHubConnectorConfig(aggregateCollision), errorWithCode("verification_id_duplicate"));
+});
+
+test("requires reviewers for every configured verification provider", () => {
+  const bugbot = verificationConfig() as Record<string, unknown>;
+  delete ((bugbot.verification as Record<string, unknown>).reviewers as Record<string, unknown>)["cursor-bugbot"];
+  assert.throws(() => validateGitHubConnectorConfig(bugbot), errorWithCode("verification_reviewer_required"));
+
+  const copilot = verificationConfig() as Record<string, unknown>;
+  delete ((copilot.verification as Record<string, unknown>).reviewers as Record<string, unknown>)["copilot-review"];
+  assert.throws(() => validateGitHubConnectorConfig(copilot), errorWithCode("verification_reviewer_required"));
+});
+
+test("rejects reviewer lists for providers without a configured trigger", () => {
+  const value = verificationConfig() as Record<string, unknown>;
+  value.triggers = (value.triggers as Array<Record<string, unknown>>).filter(
+    (trigger) => trigger.recognizer !== "cursor-bugbot",
+  );
+  assert.throws(() => validateGitHubConnectorConfig(value), errorWithCode("verification_reviewer_unused"));
+});
+
+test("rejects duplicate reviewer logins case-insensitively", () => {
+  const acrossProviders = verificationConfig() as Record<string, unknown>;
+  const acrossReviewers = (acrossProviders.verification as Record<string, unknown>).reviewers as Record<string, string[]>;
+  acrossReviewers["copilot-review"] = ["CURSOR[BOT]"];
+  assert.throws(() => validateGitHubConnectorConfig(acrossProviders), errorWithCode("verification_reviewer_duplicate"));
+
+  const withinProvider = verificationConfig() as Record<string, unknown>;
+  const withinReviewers = (withinProvider.verification as Record<string, unknown>).reviewers as Record<string, string[]>;
+  withinReviewers["cursor-bugbot"] = ["Cursor[bot]", "cursor[BOT]"];
+  assert.throws(() => validateGitHubConnectorConfig(withinProvider), errorWithCode("verification_reviewer_duplicate"));
+});
+
+test("validates verification reviewer object shape and provider keys", () => {
+  const nonObject = verificationConfig() as Record<string, unknown>;
+  (nonObject.verification as Record<string, unknown>).reviewers = [];
+  assert.throws(() => validateGitHubConnectorConfig(nonObject), errorWithCode("verification_reviewers"));
+
+  const unknownProvider = verificationConfig() as Record<string, unknown>;
+  const reviewers = (unknownProvider.verification as Record<string, unknown>).reviewers as Record<string, unknown>;
+  reviewers.other = ["other[bot]"];
+  assert.throws(() => validateGitHubConnectorConfig(unknownProvider), errorWithCode("unknown_property"));
+});
+
+test("requires an explicit GraphQL URL for non-default REST APIs", () => {
+  const value = verificationConfig() as Record<string, unknown>;
+  value.apiBaseUrl = "https://github.example.test";
+  assert.throws(() => validateGitHubConnectorConfig(value), errorWithCode("graphql_url_required"));
+});
+
+test("rejects untrusted GraphQL URLs", () => {
+  for (const graphqlUrl of [
+    "https://user:password@api.github.com/graphql",
+    "https://api.github.com/graphql?token=secret",
+    "https://api.github.com/graphql#secret",
+    "ftp://api.github.com/graphql",
+    "http://github.example.test/graphql",
+  ]) {
+    const value = verificationConfig() as Record<string, unknown>;
+    value.graphqlUrl = graphqlUrl;
+    assert.throws(() => validateGitHubConnectorConfig(value), errorWithCode("graphql_url"));
+  }
 });

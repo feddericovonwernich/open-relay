@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Deterministic PR Watcher Architecture",
+    "output": "runtime.architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/feddericovonwernich/open-relay",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "9d30ce528886328e23c554b720d49b68760773b6"
+    },
+    "viewBox": [1700, 650],
+    "views": [
+      {
+        "id": "evidence-to-verdict",
+        "label": "Evidence to verdict",
+        "focus": ["github-rest", "github-graphql", "github-connector", "heuristic-analysis", "verification-event"],
+        "note": "Current-head checks, configured artifacts, and authoritative review threads become one deterministic verdict."
+      },
+      {
+        "id": "single-consumer-delivery",
+        "label": "Single-consumer delivery",
+        "focus": ["verification-event", "relay-core", "notification-acquisition", "relay-notify", "coding-agent"],
+        "note": "The notify command hides lease mechanics and acknowledges only after stdout delivery."
+      },
+      {
+        "id": "future-family-seam",
+        "label": "Future aggregation seam",
+        "focus": ["low-level-events", "future-family", "verification-event", "notification-acquisition"],
+        "note": "A future durable Relay reducer may replace connector-owned aggregation without changing notification delivery."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "github-rest",
+      "type": "external",
+      "label": "GitHub REST",
+      "pos": [40, 170],
+      "size": [150, 68]
+    },
+    {
+      "id": "github-graphql",
+      "type": "external",
+      "label": "GitHub GraphQL",
+      "pos": [40, 350],
+      "size": [150, 68]
+    },
+    {
+      "id": "github-connector",
+      "type": "backend",
+      "label": "GitHub Connector",
+      "pos": [260, 260],
+      "size": [160, 72],
+      "sources": [
+        {
+          "path": "src/connectors/github/runner.ts",
+          "label": "Polling and settlement"
+        }
+      ]
+    },
+    {
+      "id": "heuristic-analysis",
+      "type": "backend",
+      "label": "Heuristic Analysis",
+      "pos": [500, 260],
+      "size": [170, 72],
+      "tag": "No LLM",
+      "sources": [
+        {
+          "path": "docs/superpowers/specs/2026-09-17-deterministic-pr-watcher-design.md",
+          "label": "Deterministic rules"
+        }
+      ]
+    },
+    {
+      "id": "verification-event",
+      "type": "messagebus",
+      "label": "pr.verification.settled@1",
+      "pos": [750, 160],
+      "size": [190, 72]
+    },
+    {
+      "id": "low-level-events",
+      "type": "messagebus",
+      "label": "Low-level Events",
+      "pos": [750, 390],
+      "size": [190, 72]
+    },
+    {
+      "id": "relay-core",
+      "type": "database",
+      "label": "Relay Core",
+      "pos": [1010, 260],
+      "size": [170, 72],
+      "sources": [
+        {
+          "path": "src/store.ts",
+          "label": "Durable events and leases"
+        }
+      ]
+    },
+    {
+      "id": "notification-acquisition",
+      "type": "backend",
+      "label": "Notification Acquisition",
+      "pos": [1250, 160],
+      "size": [190, 72]
+    },
+    {
+      "id": "relay-notify",
+      "type": "frontend",
+      "label": "relay notify",
+      "pos": [1480, 160],
+      "size": [150, 72]
+    },
+    {
+      "id": "coding-agent",
+      "type": "external",
+      "label": "Coding Agent",
+      "pos": [1480, 350],
+      "size": [150, 72]
+    },
+    {
+      "id": "future-family",
+      "type": "backend",
+      "label": "Aggregation Family",
+      "pos": [1010, 500],
+      "size": [170, 72],
+      "sources": [
+        {
+          "path": "docs/superpowers/specs/2026-09-17-deterministic-pr-watcher-design.md",
+          "label": "Future extension seam"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "GitHub",
+      "wraps": ["github-rest", "github-graphql"],
+      "pad": 24
+    },
+    {
+      "kind": "region",
+      "label": "Connector process",
+      "wraps": ["github-connector", "heuristic-analysis"],
+      "pad": 28
+    },
+    {
+      "kind": "security-group",
+      "label": "Loopback-only Relay runtime",
+      "wraps": ["verification-event", "low-level-events", "relay-core", "notification-acquisition", "future-family"],
+      "pad": 28
+    }
+  ],
+  "connections": [
+    {
+      "id": "rest-evidence",
+      "from": "github-rest",
+      "to": "github-connector",
+      "label": "current-head artifacts",
+      "variant": "default",
+      "labelAt": [225, 150]
+    },
+    {
+      "id": "graphql-evidence",
+      "from": "github-graphql",
+      "to": "github-connector",
+      "label": "unresolved bot threads",
+      "variant": "security",
+      "labelAt": [225, 346]
+    },
+    {
+      "id": "normalize-facts",
+      "from": "github-connector",
+      "to": "heuristic-analysis",
+      "label": "bounded canonical facts",
+      "variant": "emphasis",
+      "labelAt": [460, 240]
+    },
+    {
+      "id": "emit-verification",
+      "from": "heuristic-analysis",
+      "to": "verification-event",
+      "label": "verdict + fixed actions",
+      "variant": "emphasis",
+      "labelAt": [710, 250]
+    },
+    {
+      "id": "emit-low-level",
+      "from": "github-connector",
+      "to": "low-level-events",
+      "label": "existing additive events",
+      "variant": "default",
+      "labelAt": [600, 400]
+    },
+    {
+      "id": "persist-verification",
+      "from": "verification-event",
+      "to": "relay-core",
+      "label": "accept idempotently",
+      "variant": "emphasis",
+      "labelAt": [975, 140]
+    },
+    {
+      "id": "persist-low-level",
+      "from": "low-level-events",
+      "to": "relay-core",
+      "label": "preserve compatibility",
+      "variant": "default",
+      "labelAt": [850, 480]
+    },
+    {
+      "id": "claim-notification",
+      "from": "relay-core",
+      "to": "notification-acquisition",
+      "label": "single-consumer lease",
+      "variant": "security",
+      "labelAt": [1215, 250]
+    },
+    {
+      "id": "deliver-notification",
+      "from": "notification-acquisition",
+      "to": "relay-notify",
+      "label": "matching definition + PR",
+      "variant": "emphasis",
+      "labelAt": [1460, 140]
+    },
+    {
+      "id": "wake-agent",
+      "from": "relay-notify",
+      "to": "coding-agent",
+      "label": "one analyzed JSON payload",
+      "variant": "emphasis",
+      "labelAt": [1385, 300]
+    },
+    {
+      "id": "future-consume",
+      "from": "low-level-events",
+      "to": "future-family",
+      "label": "future typed inputs",
+      "variant": "dashed",
+      "labelAt": [890, 475]
+    },
+    {
+      "id": "future-produce",
+      "from": "future-family",
+      "to": "relay-core",
+      "label": "future notification event",
+      "variant": "dashed",
+      "labelAt": [1210, 420]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Current implementation",
+      "items": [
+        "Connector owns cross-source settlement and deterministic heuristics",
+        "Existing automation and CI events remain additive",
+        "No LLM participates in verdict or action generation"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Delivery contract",
+      "items": [
+        "Notification definitions have a dedicated acquisition kind",
+        "relay notify prints before internal acknowledgment",
+        "Crash between print and acknowledgment may replay"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Future aggregation families",
+      "items": [
+        "A durable Relay reducer may later consume low-level events",
+        "The event and notification contracts remain reusable",
+        "Migration must preserve version and idempotency semantics"
+      ]
+    }
+  ]
+}

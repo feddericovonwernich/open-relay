@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { normalizeCiSettled, normalizeCompletion, normalizeSettled } from "./normalize.js";
+import { verificationKey } from "./verification.js";
 export class GitHubRelayEmitterError extends Error {
     code;
     status;
@@ -251,5 +252,9 @@ export class GitHubRelayEmitter {
     async emitCiSettled(snapshot, checks, signal) {
         const payload = normalizeCiSettled(snapshot, checks);
         return this.postSettled({ id: "pr-ci-settled-v1", emit: { type: "pr.ci.settled", version: 1 } }, snapshot, payload, ciSettledKey(payload), { drift: "ci_drift", invalid: "ci_invalid" }, signal);
+    }
+    async emitVerification(verification, snapshot, payload, signal) {
+        const key = verificationKey(payload);
+        return this.postSettled(verification, snapshot, payload, key, { drift: "verification_drift", invalid: "verification_invalid" }, signal);
     }
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
@@ -10,7 +11,7 @@ import { loadGitHubConnectorConfig } from "./connectors/github/config.js";
 import { GitHubRelayEmitter } from "./connectors/github/emitter.js";
 import { runGitHubConnector } from "./connectors/github/runner.js";
 import { initializeProject } from "./init.js";
-import { pollAgent, replyAgent } from "./agent-session.js";
+import { notifyAgent, pollAgent, replyAgent } from "./agent-session.js";
 export function parseArgs(argv) {
     const args = [];
     const options = {};
@@ -66,6 +67,30 @@ function json(value) {
 }
 function printJson(io, value) {
     io.stdout.write(`${json(value)}\n`);
+}
+async function writeJsonLine(io, value) {
+    const output = io.stdout;
+    const callbackSupported = output.write.length >= 2;
+    await new Promise((resolveWrite, rejectWrite) => {
+        let settled = false;
+        const done = (error) => {
+            if (settled)
+                return;
+            settled = true;
+            if (error)
+                rejectWrite(error);
+            else
+                resolveWrite();
+        };
+        try {
+            output.write(`${json(value)}\n`, done);
+            if (!callbackSupported)
+                done();
+        }
+        catch (error) {
+            done(error instanceof Error ? error : new Error("stdout write failed"));
+        }
+    });
 }
 export function withoutSecrets(value) {
     if (Array.isArray(value))
@@ -260,6 +285,44 @@ async function agentCommand(parsed, io) {
     }
     throw new Error(`unknown agent action: ${action}`);
 }
+async function notifyCommand(parsed, io) {
+    if (parsed.args.length !== 0)
+        throw new Error("notify accepts no positional arguments");
+    for (const name of ["definitions", "correlation-id"]) {
+        if (typeof parsed.options[name] !== "string" || parsed.options[name] === "") {
+            throw new Error(`notify requires --${name} <value>`);
+        }
+    }
+    const root = resolve(io.cwd, option(parsed.options, "project-root", "project") ?? ".");
+    const runtime = await readRuntime(root, parsed.options);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    process.once("SIGINT", abort);
+    process.once("SIGTERM", abort);
+    try {
+        await notifyAgent({
+            root,
+            runtime,
+            capabilities: {
+                workerId: `notify:${process.pid}:${randomUUID()}`,
+                allowedDefinitions: option(parsed.options, "definitions").split(",").filter(Boolean),
+                tools: [],
+                structuredOutput: false,
+                contextTokens: 0,
+                systemReserveTokens: 0,
+                maxConcurrent: 1,
+                correlationId: option(parsed.options, "correlation-id"),
+            },
+            signal: controller.signal,
+            writePayload: (payload) => writeJsonLine(io, payload),
+        });
+        return 0;
+    }
+    finally {
+        process.off("SIGINT", abort);
+        process.off("SIGTERM", abort);
+    }
+}
 async function startRelay(parsed, io) {
     const [{ CredentialStore }, { Dispatcher }, { ProcessAdapter }, { createRelayServer }, { openStore }] = await Promise.all([
         import("./auth.js"),
@@ -322,6 +385,7 @@ async function execute(parsed, io) {
             "  relay recovery <list|resolve> | relay workers | relay reload",
             "  relay agent poll <worker-id> [options]",
             "  relay agent reply <lease-id> <action> [--json <object>]",
+            "  relay notify --definitions <type@version> --correlation-id <id>",
             "",
         ].join("\n"));
         return 0;
@@ -360,7 +424,7 @@ async function execute(parsed, io) {
         const abort = () => controller.abort();
         process.once("SIGINT", abort);
         process.once("SIGTERM", abort);
-        const client = new GitHubClient({ baseUrl: config.apiBaseUrl, apiVersion: config.apiVersion, token: githubToken });
+        const client = new GitHubClient({ baseUrl: config.apiBaseUrl, graphqlUrl: config.graphqlUrl, apiVersion: config.apiVersion, token: githubToken });
         const emitter = new GitHubRelayEmitter({
             baseUrl: `http://127.0.0.1:${runtime.port}`,
             adminToken: runtime.token,
@@ -388,6 +452,8 @@ async function execute(parsed, io) {
     }
     if (parsed.command === "agent")
         return agentCommand(parsed, io);
+    if (parsed.command === "notify")
+        return notifyCommand(parsed, io);
     if (parsed.command === "start")
         return startRelay(parsed, io);
     if (parsed.command === "stop") {
@@ -452,7 +518,7 @@ async function execute(parsed, io) {
         printJson(io, withoutSecrets(await request(runtime, "POST", "/v1/admin/reload", {})));
         return 0;
     }
-    throw new Error("usage: relay init|start|stop|emit|get|cancel|recovery|workers|reload|agent");
+    throw new Error("usage: relay init|start|stop|emit|get|cancel|recovery|workers|reload|agent|notify");
 }
 export async function runCli(argv, io = {}) {
     const output = io.stdout ?? process.stdout;

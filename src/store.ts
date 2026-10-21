@@ -117,6 +117,7 @@ export type Store = {
   getRevision(digest: string): DefinitionRevision;
   countEvents(): number;
   acquireAgent(worker: WorkerCapabilities, now: number): Delivery | undefined;
+  acquireNotification(worker: WorkerCapabilities, now: number): Delivery | undefined;
   acquireProcess(worker: ProcessWorker, now: number): Delivery | undefined;
   blockUnmatched?(workers: readonly WorkerCapabilities[], now: number): void;
   watchWork?(listener: () => void): () => void;
@@ -376,6 +377,10 @@ class SqliteStore implements Store {
     return this.acquire(worker, now, "agent");
   }
 
+  acquireNotification(worker: WorkerCapabilities, now: number): Delivery | undefined {
+    return this.acquire(worker, now, "notification");
+  }
+
   acquireProcess(worker: ProcessWorker, now: number): Delivery | undefined {
     if (worker.workerId !== "relay:process") return undefined;
     return this.acquire(worker, now, "process");
@@ -385,6 +390,7 @@ class SqliteStore implements Store {
       const rows = this.queuedEvents.all(now) as EventRow[];
       for (const row of rows) {
         const revision = this.getRevision(String(row.definition_revision));
+        if (revision.definition.handler.kind === "notification") continue;
         if (workers.some((worker) => this.agentMatches(row, revision, worker))) continue;
         const eventId = String(row.id);
         this.db.prepare("UPDATE events SET state = 'blocked', updated_at = ? WHERE id = ? AND state <> 'blocked'").run(now, eventId);
@@ -605,7 +611,7 @@ class SqliteStore implements Store {
 
   close(): void { this.db.close(); }
 
-  private acquire(worker: WorkerCapabilities | ProcessWorker, now: number, kind: "agent" | "process"): Delivery | undefined {
+  private acquire(worker: WorkerCapabilities | ProcessWorker, now: number, kind: "agent" | "notification" | "process"): Delivery | undefined {
     const delivery = transaction(this.db, () => {
       const workerId = worker.workerId;
       const maxConcurrent = worker.maxConcurrent;
@@ -616,6 +622,7 @@ class SqliteStore implements Store {
         const handler = revision.definition.handler;
         if (handler.kind !== kind) continue;
         if (kind === "agent" && !this.agentMatches(row, revision, worker as WorkerCapabilities)) continue;
+        if (kind === "notification" && !this.notificationMatches(row, revision, worker as WorkerCapabilities)) continue;
         const leaseId = randomUUID();
         const attempt = Number(row.attempt) + 1;
         const leaseExpiresAt = now + revision.definition.timeoutMs;
@@ -643,6 +650,15 @@ class SqliteStore implements Store {
     const requiredContext = Math.max(definition.requires.minContextTokens, worker.systemReserveTokens + definition.requires.maxInputTokens + definition.requires.maxOutputTokens);
     return worker.contextTokens >= requiredContext
       && (worker.correlationId === undefined || (row.correlation_id !== null && String(row.correlation_id) === worker.correlationId));
+  }
+
+  private notificationMatches(row: EventRow, revision: DefinitionRevision, worker: WorkerCapabilities): boolean {
+    const definition = revision.definition;
+    if (definition.handler.kind !== "notification" || worker.correlationId === undefined) return false;
+    const name = `${definition.type}@${definition.version}`;
+    return worker.allowedDefinitions.includes(name)
+      && row.correlation_id !== null
+      && String(row.correlation_id) === worker.correlationId;
   }
 
   private transition(authority: DeliveryAuthority, states: readonly string[], nextState: string | undefined, update: { kind: string; data: unknown }): void {

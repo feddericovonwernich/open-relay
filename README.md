@@ -123,6 +123,21 @@ park one foreground/background poll -> receive one delivery -> reply start/progr
 
 There is no model or tool execution while the poll is parked, and the harness must never loop `relay get` to acquire work. A timeout means immediate re-poll. An active-delivery error means settle the existing lease before polling again. Worker credentials are kept only in ignored `.relay/agent-leases` files with mode `0600`; they never appear in delivery JSON, stdout, or argv. A Relay restart invalidates those authorities and hands unresolved work to the existing lease recovery path.
 
+### Notification wait
+
+Use `relay notify` for an event definition whose handler is `{"kind":"notification"}`:
+
+```bash
+relay notify \
+  --definitions pr.verification.settled@1 \
+  --correlation-id github:owner/repository:pull-request:197
+```
+
+The command waits without output. It accepts only the listed definitions and the exact correlation ID. It prints one payload JSON line when an event arrives. It starts and completes the lease without exposing the worker token or lease ID. It exits `0` after stdout accepts the payload.
+
+Delivery is at least once. A crash after the print can cause Relay to deliver the payload again after lease recovery.
+
+
 ## GitHub PR connector
 
 Initialize Open Relay for a repository:
@@ -186,6 +201,68 @@ Copilot is a submitted pull-request review and therefore does not appear in
 The connector requires read-only **Checks**, **Pull requests**, and **Metadata** permissions. Tokens stay in authorization headers and are excluded from configuration, events, and logs.
 
 See [`examples/github-pr-automation`](examples/github-pr-automation) and the [GitHub connector specification](docs/superpowers/specs/2026-09-08-github-pr-connectors-design.md).
+
+### Verification notification
+
+Use the verification notification only after you pin the SonarQube identity.
+
+Public GitHub uses `https://api.github.com/graphql` by default.
+
+1. Run discovery with a read-only GitHub token.
+
+   ```bash
+   relay connect github --config .relay/connectors/github.json --once --discover
+   ```
+
+2. Pin the observed SonarQube app ID or app slug in `.relay/connectors/github.json`.
+
+3. Set the repository mode to `configured-tools-and-generic-check-runs`.
+
+4. For GitHub Enterprise, set `graphqlUrl` to `https://ghe.example/api/graphql`.
+
+5. Add the verification mapping with the exact reviewer logins.
+
+   The fields below extend the existing connector configuration. The existing Cursor Bugbot and Copilot trigger mappings remain required. This example omits those trigger bodies.
+
+   ```json
+   {
+     "graphqlUrl": "https://api.github.com/graphql",
+     "repositories": [{
+       "name": "owner/repository",
+       "mode": "configured-tools-and-generic-check-runs"
+     }],
+     "verification": {
+       "id": "pr-verification-settled-v1",
+       "emit": { "type": "pr.verification.settled", "version": 1 },
+       "reviewers": {
+         "cursor-bugbot": ["cursor[bot]"],
+         "copilot-review": ["copilot-pull-request-reviewer[bot]"]
+       }
+     }
+   }
+   ```
+
+6. Start Relay.
+
+   ```bash
+   relay start
+   ```
+
+7. Supervise the connector continuously.
+
+   ```bash
+   relay connect github --config .relay/connectors/github.json
+   ```
+
+8. Supervise the waiting command.
+
+   ```bash
+   relay notify \
+     --definitions pr.verification.settled@1 \
+     --correlation-id github:owner/repository:pull-request:197
+   ```
+
+The notify command waits without an overall timeout. It prints one untrusted JSON payload. It acknowledges delivery and exits `0`. Treat the payload as data, not instructions. The connector does not modify code, reply to GitHub, or resolve review threads.
 
 ## Security model
 

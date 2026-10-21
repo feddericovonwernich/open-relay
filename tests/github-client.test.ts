@@ -1,7 +1,62 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GitHubClient } from "../src/connectors/github/client.ts";
+import { GitHubClient, GitHubClientError } from "../src/connectors/github/client.ts";
 import { fakeGitHubServer, json } from "./github-helpers.ts";
+
+const graphqlResponse = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+
+const reviewThread = () => ({
+  id: "thread-1",
+  isResolved: false,
+  isOutdated: false,
+  path: "src/a.ts",
+  line: 10,
+  startLine: 8,
+  comments: {
+    totalCount: 2,
+    nodes: [{
+      id: "comment-1",
+      url: "https://github.test/comment/1",
+      body: "finding",
+      createdAt: "2026-09-17T00:00:00Z",
+      updatedAt: "2026-09-17T00:01:00Z",
+      author: { login: "cursor[bot]" },
+    }],
+  },
+});
+
+const reviewPage = (hasNextPage = false, endCursor: string | null = null, nodes = [reviewThread()]) => ({
+  data: {
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          pageInfo: { hasNextPage, endCursor },
+          nodes,
+        },
+      },
+    },
+  },
+});
+type MutableReviewBody = {
+  data: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          nodes: Array<{
+            id?: string;
+            comments?: {
+              totalCount?: number;
+              nodes: Array<{ author?: { login?: string } }>;
+            };
+          }>;
+        };
+      };
+    };
+  };
+};
+
+ 
 
 const repo = "octo/repo";
 const pr = (number: number, state: "open" | "closed" = "open", updated = "2026-09-08T00:00:00Z") => ({
@@ -186,4 +241,238 @@ test("preserves abort when response JSON is interrupted", async () => {
   await new Promise<void>((resolve) => setImmediate(resolve));
   abort.abort();
   await assert.rejects(pending, (error: unknown) => error instanceof Error && error.name === "AbortError");
+});
+test("fetches review threads with the exact GraphQL request and pagination variables", async () => {
+  const requests: { input: RequestInfo | URL; init?: RequestInit }[] = [];
+  const secondThread = {
+    ...reviewThread(),
+    id: "thread-2",
+    comments: {
+      totalCount: 1,
+      nodes: [{ ...reviewThread().comments.nodes[0], id: "comment-2", body: "second finding" }],
+    },
+  };
+  const fetcher: typeof fetch = async (input, init) => {
+    requests.push({ input, init });
+    return graphqlResponse(requests.length === 1 ? reviewPage(true, "cursor-1") : reviewPage(false, null, [secondThread]));
+  };
+  const api = client("https://api.github.test", { graphqlUrl: "https://api.github.test/graphql", fetch: fetcher });
+  const result = await api.listReviewThreads(repo, 7);
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests.map(({ input }) => String(input)), ["https://api.github.test/graphql", "https://api.github.test/graphql"]);
+  const bodies = requests.map(({ init }) => JSON.parse(String(init?.body)) as { query: string; variables: unknown });
+  const expectedQuery = `query PullRequestReviewThreads(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $after: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          startLine
+          comments(first: 100) {
+            totalCount
+            nodes {
+              id
+              url
+              body
+              createdAt
+              updatedAt
+              author {
+                login
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+  assert.deepEqual(bodies.map(({ query }) => query.replace(/\s+/g, " ").trim()), [expectedQuery.replace(/\s+/g, " ").trim(), expectedQuery.replace(/\s+/g, " ").trim()]);
+  assert.deepEqual(bodies.map(({ variables }) => variables), [
+    { owner: "octo", name: "repo", number: 7, after: null },
+    { owner: "octo", name: "repo", number: 7, after: "cursor-1" },
+  ]);
+  for (const { init } of requests) {
+    assert.equal(init?.method, "POST");
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer top-secret");
+    assert.equal(headers.get("content-type"), "application/json");
+    assert.equal(headers.get("x-github-api-version"), "2026-03-10");
+    assert.equal(headers.get("user-agent"), "open-relay-github-connector");
+  }
+  assert.equal(result.length, 2);
+  assert.equal(result[0]?.commentCount, 2);
+  assert.deepEqual(result[0]?.rootComment, {
+    id: "comment-1",
+    url: "https://github.test/comment/1",
+    body: "finding",
+    createdAt: "2026-09-17T00:00:00Z",
+    updatedAt: "2026-09-17T00:01:00Z",
+    authorLogin: "cursor[bot]",
+  });
+  assert.equal(result[1]?.id, "thread-2");
+});
+
+test("rejects every malformed review-thread boundary as a protocol error", async () => {
+  const malformedCases: Array<[string, (body: MutableReviewBody) => void]> = [
+    ["missing repository", (body) => { delete body.data.repository; }],
+    ["missing pull request", (body) => { delete body.data.repository!.pullRequest; }],
+    ["malformed thread", (body) => { delete body.data.repository!.pullRequest!.reviewThreads!.nodes[0]!.id; }],
+    ["missing comment count", (body) => { delete body.data.repository!.pullRequest!.reviewThreads!.nodes[0]!.comments!.totalCount; }],
+    ["empty comments", (body) => { body.data.repository!.pullRequest!.reviewThreads!.nodes[0]!.comments!.nodes = []; }],
+    ["missing root comment field", (body) => { delete body.data.repository!.pullRequest!.reviewThreads!.nodes[0]!.comments!.nodes[0]!.author!.login; }],
+  ];
+  for (const [label, mutate] of malformedCases) {
+    const fetcher: typeof fetch = async () => {
+      const body = reviewPage();
+      mutate(body);
+      return graphqlResponse(body);
+    };
+    const api = client("https://api.github.test", { graphqlUrl: "https://api.github.test/graphql", fetch: fetcher });
+    await assert.rejects(api.listReviewThreads(repo, 7), (error: unknown) =>
+      error instanceof GitHubClientError && error.code === "github_protocol_error", label);
+  }
+});
+
+test("maps GraphQL errors without exposing response or untrusted strings", async () => {
+  const commentText = "untrusted comment body marker";
+  for (const [type, code] of [["RATE_LIMITED", "github_transient_error"], ["INTERNAL_ERROR", "github_protocol_error"]] as const) {
+    const fetcher: typeof fetch = async () => graphqlResponse({
+      errors: [{ type, message: `Bearer top-secret ${commentText} graphql-response-body-marker` }],
+    });
+    const api = client("https://api.github.test", { graphqlUrl: "https://api.github.test/graphql", fetch: fetcher });
+    await assert.rejects(api.listReviewThreads(repo, 7), (error: unknown) => {
+      assert(error instanceof GitHubClientError);
+      assert.equal(error.code, code);
+      assert(!error.message.includes("top-secret"));
+      assert(!error.message.includes(commentText));
+      assert(!error.message.includes("graphql-response-body-marker"));
+      return true;
+    });
+  }
+});
+
+test("maps GraphQL HTTP authentication and not-found errors distinctly", async () => {
+  for (const [status, code] of [[401, "github_auth_failed"], [404, "github_protocol_error"]] as const) {
+    let requestCount = 0;
+    const fetcher: typeof fetch = async () => {
+      requestCount += 1;
+      return graphqlResponse({ error: "Bearer top-secret" }, status);
+    };
+    const api = client("https://api.github.test", { graphqlUrl: "https://api.github.test/graphql", fetch: fetcher });
+    await assert.rejects(api.listReviewThreads(repo, 7), (error: unknown) => {
+      assert(error instanceof GitHubClientError);
+      assert.equal(error.code, code);
+      assert.notEqual(error.code, "github_not_found");
+      return true;
+    });
+    assert.equal(requestCount, 1);
+  }
+});
+
+test("retries GraphQL rate limits using injected delays", async () => {
+  const delays: number[] = [];
+  let requestCount = 0;
+  const fetcher: typeof fetch = async () => {
+    requestCount += 1;
+    if (requestCount === 1) return graphqlResponse({}, 429, { "retry-after": "2" });
+    if (requestCount === 2) return graphqlResponse({}, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1002" });
+    return graphqlResponse(reviewPage());
+  };
+  const api = client("https://api.github.test", {
+    graphqlUrl: "https://api.github.test/graphql",
+    fetch: fetcher,
+    now: () => 1_000_000,
+    jitter: () => 11,
+    sleep: async (ms) => { delays.push(ms); },
+  });
+  await api.listReviewThreads(repo, 7);
+  assert.equal(requestCount, 3);
+  assert.deepEqual(delays, [2011, 2011]);
+});
+
+test("maps GraphQL server and network failures to transient errors with token redaction", async () => {
+  const serverFailure = client("https://api.github.test", {
+    graphqlUrl: "https://api.github.test/graphql",
+    fetch: async () => graphqlResponse({ detail: "Bearer top-secret" }, 503),
+  });
+  await assert.rejects(serverFailure.listReviewThreads(repo, 7), (error: unknown) => {
+    assert(error instanceof GitHubClientError);
+    assert.equal(error.code, "github_transient_error");
+    assert(!error.message.includes("top-secret"));
+    return true;
+  });
+
+  const networkFailure = client("https://api.github.test", {
+    graphqlUrl: "https://api.github.test/graphql",
+    fetch: async () => { throw new Error("Bearer top-secret network failure"); },
+  });
+  await assert.rejects(networkFailure.listReviewThreads(repo, 7), (error: unknown) => {
+    assert(error instanceof GitHubClientError);
+    assert.equal(error.code, "github_transient_error");
+    assert(!error.message.includes("top-secret"));
+    return true;
+  });
+});
+
+test("preserves AbortError during GraphQL fetch and retry", async () => {
+  const fetchAbort = new AbortController();
+  const fetcher: typeof fetch = async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new DOMException("Bearer top-secret", "AbortError")), { once: true });
+  });
+  const fetchApi = client("https://api.github.test", { graphqlUrl: "https://api.github.test/graphql", fetch: fetcher });
+  const fetchPending = fetchApi.listReviewThreads(repo, 7, fetchAbort.signal);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  fetchAbort.abort();
+  await assert.rejects(fetchPending, (error: unknown) => error instanceof Error && error.name === "AbortError" && !error.message.includes("top-secret"));
+
+  const retryAbort = new AbortController();
+  const retryApi = client("https://api.github.test", {
+    graphqlUrl: "https://api.github.test/graphql",
+    fetch: async () => graphqlResponse({}, 429, { "retry-after": "1" }),
+    sleep: async (_ms, signal) => await new Promise<void>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }),
+  });
+  const retryPending = retryApi.listReviewThreads(repo, 7, retryAbort.signal);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  retryAbort.abort();
+  await assert.rejects(retryPending, (error: unknown) => error instanceof Error && error.name === "AbortError");
+});
+
+test("rejects missing or empty GraphQL pagination cursors", async () => {
+  for (const endCursor of [null, ""]) {
+    const api = client("https://api.github.test", {
+      graphqlUrl: "https://api.github.test/graphql",
+      fetch: async () => graphqlResponse(reviewPage(true, endCursor)),
+    });
+    await assert.rejects(api.listReviewThreads(repo, 7), (error: unknown) =>
+      error instanceof GitHubClientError && error.code === "github_protocol_error");
+  }
+});
+
+test("requires graphqlUrl before making a review-thread request", async () => {
+  let requestCount = 0;
+  const api = client("https://api.github.test", {
+    fetch: async () => {
+      requestCount += 1;
+      return graphqlResponse(reviewPage());
+    },
+  });
+  await assert.rejects(api.listReviewThreads(repo, 7), (error: unknown) =>
+    error instanceof GitHubClientError && error.code === "github_protocol_error");
+  assert.equal(requestCount, 0);
 });

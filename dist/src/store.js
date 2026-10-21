@@ -251,6 +251,9 @@ class SqliteStore {
     acquireAgent(worker, now) {
         return this.acquire(worker, now, "agent");
     }
+    acquireNotification(worker, now) {
+        return this.acquire(worker, now, "notification");
+    }
     acquireProcess(worker, now) {
         if (worker.workerId !== "relay:process")
             return undefined;
@@ -261,6 +264,8 @@ class SqliteStore {
             const rows = this.queuedEvents.all(now);
             for (const row of rows) {
                 const revision = this.getRevision(String(row.definition_revision));
+                if (revision.definition.handler.kind === "notification")
+                    continue;
                 if (workers.some((worker) => this.agentMatches(row, revision, worker)))
                     continue;
                 const eventId = String(row.id);
@@ -489,6 +494,8 @@ class SqliteStore {
                     continue;
                 if (kind === "agent" && !this.agentMatches(row, revision, worker))
                     continue;
+                if (kind === "notification" && !this.notificationMatches(row, revision, worker))
+                    continue;
                 const leaseId = randomUUID();
                 const attempt = Number(row.attempt) + 1;
                 const leaseExpiresAt = now + revision.definition.timeoutMs;
@@ -518,6 +525,15 @@ class SqliteStore {
         const requiredContext = Math.max(definition.requires.minContextTokens, worker.systemReserveTokens + definition.requires.maxInputTokens + definition.requires.maxOutputTokens);
         return worker.contextTokens >= requiredContext
             && (worker.correlationId === undefined || (row.correlation_id !== null && String(row.correlation_id) === worker.correlationId));
+    }
+    notificationMatches(row, revision, worker) {
+        const definition = revision.definition;
+        if (definition.handler.kind !== "notification" || worker.correlationId === undefined)
+            return false;
+        const name = `${definition.type}@${definition.version}`;
+        return worker.allowedDefinitions.includes(name)
+            && row.correlation_id !== null
+            && String(row.correlation_id) === worker.correlationId;
     }
     transition(authority, states, nextState, update) {
         transaction(this.db, () => {

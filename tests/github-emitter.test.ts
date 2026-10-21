@@ -3,6 +3,8 @@ import test from "node:test";
 import { ciSettledKey, completionKey, GitHubRelayEmitter, pullRequestCorrelationId, settledKey } from "../src/connectors/github/emitter.ts";
 import { normalizeCiSettled, normalizeCompletion, normalizeSettled } from "../src/connectors/github/normalize.ts";
 import type { CompletionCandidate, GitHubCheckRun, PrSnapshot, TriggerConfig } from "../src/connectors/github/types.ts";
+import { normalizeVerification, verificationKey } from "../src/connectors/github/verification.ts";
+import type { GitHubVerificationConfig, PrVerificationSettled } from "../src/connectors/github/types.ts";
 
 const trigger: TriggerConfig = {
   id: "copilot-v1",
@@ -342,4 +344,72 @@ test("redacts credentials from generic Relay failures", async () => {
     assert.equal(String(error).includes("generic payload"), true);
     return true;
   });
+});
+
+test("emits the fixed verification event envelope and maps response taxonomy", async () => {
+  const config: GitHubVerificationConfig = {
+    id: "pr-verification-v1",
+    emit: { type: "pr.verification.settled", version: 1 },
+    reviewers: { "cursor-bugbot": ["bugbot[bot]"], "copilot-review": ["copilot[bot]"] },
+  };
+  const payload: PrVerificationSettled = normalizeVerification(snapshot, [candidate], [ciCheck()], [], config);
+  const requests: Request[] = [];
+  let eventStatus = 201;
+  const fetcher = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+    requests.push(new Request(input, init));
+    return requestUrl(input).pathname === "/v1/credentials"
+      ? response(201, { token: "producer-secret" })
+      : response(eventStatus, eventStatus >= 400 ? { error: { code: "relay_error", message: "admin-secret producer-secret review body" } } : { event: { id: "verification-1" } });
+  };
+  const emitter = new GitHubRelayEmitter({ baseUrl: "https://relay.test", adminToken: "admin-secret", fetch: fetcher });
+  const key = verificationKey(payload);
+  assert.equal(await emitter.emitVerification(config, snapshot, payload), "emitted");
+  const event = requests.find((request) => requestUrl(request).pathname === "/v1/events");
+  assert.ok(event);
+  const body = JSON.parse(await event.text()) as Record<string, unknown>;
+  assert.deepEqual(body, {
+    type: "pr.verification.settled",
+    version: 1,
+    payload,
+    idempotencyKey: key,
+    correlationId: "github:example/repo:pull-request:12",
+  });
+  assert.equal(event.headers.get("Idempotency-Key"), key);
+  assert.equal(JSON.stringify(body).includes("producer-secret"), false);
+  assert.equal(JSON.stringify(body).includes("admin-secret"), false);
+
+  eventStatus = 200;
+  assert.equal(await emitter.emitVerification(config, snapshot, payload), "replayed");
+  for (const [status, expected] of [[404, "verification_invalid"], [409, "verification_drift"]] as const) {
+    eventStatus = status;
+    await assert.rejects(emitter.emitVerification(config, snapshot, payload), (error: unknown) => {
+      assert.equal(errorCode(error), expected);
+      assert.equal(String(error).includes("producer-secret"), false);
+      assert.equal(String(error).includes("review body"), false);
+      return true;
+    });
+  }
+});
+
+test("verification emitter rejects an oversized payload before credentials or event requests", async () => {
+  const config: GitHubVerificationConfig = {
+    id: "pr-verification-v1",
+    emit: { type: "pr.verification.settled", version: 1 },
+    reviewers: { "cursor-bugbot": ["bugbot[bot]"] },
+  };
+  const checks = Array.from({ length: 20 }, (_, id) => ciCheck({ id, name: `${"long-check-name".repeat(400)}-${id}`, detailsUrl: `https://ci.example/${"u".repeat(2_000)}` }));
+  const payload = normalizeVerification(snapshot, [candidateFor("cursor-bugbot", "check_run", "2")], checks, [], config);
+  assert.throws(() => verificationKey(payload), (error: unknown) => errorCode(error) === "verification_payload_too_large");
+
+  let fetchCalls = 0;
+  const emitter = new GitHubRelayEmitter({
+    baseUrl: "https://relay.test",
+    adminToken: "admin-secret",
+    fetch: async () => {
+      fetchCalls += 1;
+      return response(201, { event: { id: "unexpected" } });
+    },
+  });
+  await assert.rejects(emitter.emitVerification(config, snapshot, payload), (error: unknown) => errorCode(error) === "verification_payload_too_large");
+  assert.equal(fetchCalls, 0);
 });

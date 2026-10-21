@@ -2,8 +2,10 @@ import { readFile } from "node:fs/promises";
 import type {
   GitHubConnectorConfig,
   GitHubRepositoryConfig,
+  GitHubVerificationConfig,
   RecognizerId,
   TriggerConfig,
+  VerificationProvider,
 } from "./types.ts";
 
 export interface GitHubConfigValidationOptions {
@@ -29,6 +31,7 @@ const RECOGNIZERS: Record<RecognizerId, true> = {
 const TOP_LEVEL_KEYS: Record<string, true> = {
   connector: true,
   apiBaseUrl: true,
+  graphqlUrl: true,
   apiVersion: true,
   tokenEnv: true,
   pollIntervalMs: true,
@@ -36,6 +39,7 @@ const TOP_LEVEL_KEYS: Record<string, true> = {
   repositories: true,
   triggers: true,
   aggregate: true,
+  verification: true,
 };
 const TRIGGER_KEYS: Record<string, true> = {
   id: true,
@@ -57,6 +61,16 @@ const COPILOT_MATCH_KEYS: Record<string, true> = {
   appUrls: true,
   logins: true,
 };
+const VERIFICATION_KEYS: Record<string, true> = {
+  id: true,
+  emit: true,
+  reviewers: true,
+};
+const REVIEWER_KEYS: Record<VerificationProvider, true> = {
+  "cursor-bugbot": true,
+  "copilot-review": true,
+};
+const VERIFICATION_PROVIDERS: VerificationProvider[] = ["cursor-bugbot", "copilot-review"];
 const SECRET_KEY = /token|credential|secret/i;
 const TRIGGER_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -148,20 +162,25 @@ function isLoopback(hostname: string): boolean {
   return octets.length === 4 && octets[0] === "127" && octets.slice(1).every((part) => /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
 }
 
-function apiUrl(value: unknown, options: GitHubConfigValidationOptions): string {
-  const text = string(value, "apiBaseUrl");
+function trustedUrl(
+  value: unknown,
+  field: "apiBaseUrl" | "graphqlUrl",
+  code: "api_url" | "graphql_url",
+  options: GitHubConfigValidationOptions,
+): string {
+  const text = string(value, field);
   let parsed: URL;
   try {
     parsed = new URL(text);
   } catch {
-    invalid("api_url");
+    invalid(code);
   }
-  if (parsed.username || parsed.password || parsed.search || parsed.hash) invalid("api_url");
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) invalid(code);
   if (parsed.protocol === "https:") return parsed.toString().replace(/\/$/, "");
   if (parsed.protocol === "http:" && (options.allowLoopbackHttp || process.env.NODE_ENV === "test") && isLoopback(parsed.hostname)) {
     return parsed.toString().replace(/\/$/, "");
   }
-  invalid("api_url");
+  invalid(code);
 }
 
 function appUrls(value: unknown): string[] {
@@ -261,6 +280,51 @@ function aggregate(value: unknown): { id: string; emit: { type: string; version:
   return { id, emit: emit(record.emit) };
 }
 
+function verification(
+  value: unknown,
+  triggers: TriggerConfig[],
+  aggregateConfig: { id: string; emit: { type: string; version: number } } | undefined,
+  hasCombinedRepositories: boolean,
+): GitHubVerificationConfig {
+  const record = object(value, "verification");
+  checkUnknownKeys(record, VERIFICATION_KEYS);
+  const id = string(record.id, "verification.id");
+  if (!TRIGGER_ID.test(id)) invalid("verification_id");
+  const emission = emit(record.emit);
+  if (!hasCombinedRepositories) invalid("verification_mode");
+  if (triggers.some((trigger) => trigger.id === id) || aggregateConfig?.id === id) {
+    invalid("verification_id_duplicate");
+  }
+
+  const reviewerRecord = record.reviewers;
+  if (!isRecord(reviewerRecord)) invalid("verification_reviewers");
+  checkUnknownKeys(reviewerRecord, REVIEWER_KEYS);
+  const configuredProviders = new Set(
+    triggers
+      .filter((trigger) => trigger.recognizer === "cursor-bugbot" || trigger.recognizer === "copilot-review")
+      .map((trigger) => trigger.recognizer),
+  );
+  const seenLogins = new Set<string>();
+  const reviewers: GitHubVerificationConfig["reviewers"] = {};
+  for (const provider of VERIFICATION_PROVIDERS) {
+    const valueForProvider = reviewerRecord[provider];
+    if (valueForProvider === undefined) {
+      if (configuredProviders.has(provider)) invalid("verification_reviewer_required");
+      continue;
+    }
+    if (!configuredProviders.has(provider)) invalid("verification_reviewer_unused");
+    const logins = strings(valueForProvider, `verification.reviewers.${provider}`).map((login) =>
+      login.toLowerCase(),
+    );
+    for (const login of logins) {
+      if (seenLogins.has(login)) invalid("verification_reviewer_duplicate");
+      seenLogins.add(login);
+    }
+    reviewers[provider] = logins;
+  }
+  return { id, emit: emission, reviewers };
+}
+
 function freeze<T>(value: T): T {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value as Record<string, unknown>)) freeze(child);
@@ -300,18 +364,36 @@ export function validateGitHubConnectorConfig(
     ids.add(normalized.id);
     return normalized;
   });
+  const graphqlUrl = record.graphqlUrl === undefined
+    ? undefined
+    : trustedUrl(record.graphqlUrl, "graphqlUrl", "graphql_url", options);
   if (!hasConfiguredRepositories && record.aggregate !== undefined) invalid("aggregate_unused");
   const aggregateConfig = record.aggregate === undefined ? undefined : aggregate(record.aggregate);
   if (aggregateConfig !== undefined && ids.has(aggregateConfig.id)) invalid("aggregate_id_duplicate");
+  const hasCombinedRepositories = repositories.some(
+    (entry) => entry.mode === "configured-tools-and-generic-check-runs",
+  );
+  const verificationConfig = record.verification === undefined
+    ? undefined
+    : verification(record.verification, triggers, aggregateConfig, hasCombinedRepositories);
 
   const pollIntervalMs = record.pollIntervalMs === undefined ? 15_000 : record.pollIntervalMs;
   if (!Number.isSafeInteger(pollIntervalMs) || (pollIntervalMs as number) < 5_000 || (pollIntervalMs as number) > 3_600_000) invalid("poll_interval");
   const lookbackHours = record.lookbackHours === undefined ? 24 : record.lookbackHours;
   if (!Number.isSafeInteger(lookbackHours) || (lookbackHours as number) < 1 || (lookbackHours as number) > 720) invalid("lookback");
+  const apiBaseUrl = record.apiBaseUrl === undefined
+    ? "https://api.github.com"
+    : trustedUrl(record.apiBaseUrl, "apiBaseUrl", "api_url", options);
+  let normalizedGraphqlUrl = graphqlUrl;
+  if (verificationConfig !== undefined && normalizedGraphqlUrl === undefined) {
+    if (apiBaseUrl !== "https://api.github.com") invalid("graphql_url_required");
+    normalizedGraphqlUrl = "https://api.github.com/graphql";
+  }
 
   const normalized: GitHubConnectorConfig = {
     connector: "github",
-    apiBaseUrl: record.apiBaseUrl === undefined ? "https://api.github.com" : apiUrl(record.apiBaseUrl, options),
+    apiBaseUrl,
+    ...(normalizedGraphqlUrl === undefined ? {} : { graphqlUrl: normalizedGraphqlUrl }),
     apiVersion: optionalString(record.apiVersion, "apiVersion", "2026-03-10"),
     tokenEnv: optionalString(record.tokenEnv, "tokenEnv", "GITHUB_TOKEN"),
     pollIntervalMs: pollIntervalMs as number,
@@ -319,6 +401,7 @@ export function validateGitHubConnectorConfig(
     repositories,
     triggers,
     ...(aggregateConfig === undefined ? {} : { aggregate: aggregateConfig }),
+    ...(verificationConfig === undefined ? {} : { verification: verificationConfig }),
   };
   if (!ENV_NAME.test(normalized.tokenEnv)) invalid("token_env");
   return freeze(normalized);

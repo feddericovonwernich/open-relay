@@ -42,6 +42,15 @@ export interface ReplyAgentOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface NotifyAgentOptions {
+  root: string;
+  runtime: AgentRuntime;
+  capabilities: WorkerCapabilities;
+  writePayload(payload: unknown): Promise<void>;
+  signal?: AbortSignal;
+  fetch?: typeof globalThis.fetch;
+}
+
 type LeaseAuthority = {
   version: 1;
   relayId: string;
@@ -144,6 +153,20 @@ async function removeStaleLeases(directory: string, currentRelayId: string, work
     if (value.workerId === workerId && typeof value.leaseId === "string") activeLeaseId = value.leaseId;
   }));
   return activeLeaseId;
+}
+
+async function persistAuthority(root: string, currentRelayId: string, token: string, delivery: Delivery): Promise<void> {
+  const authority: LeaseAuthority = {
+    version: 1,
+    relayId: currentRelayId,
+    workerId: delivery.workerId,
+    leaseId: delivery.leaseId,
+    eventId: delivery.event.id,
+    token,
+  };
+  const path = leaseFile(root, authority.leaseId);
+  await writeFile(path, JSON.stringify(authority), { encoding: "utf8", mode: 0o600, flag: "wx" });
+  await chmod(path, 0o600);
 }
 
 async function registration(
@@ -258,17 +281,55 @@ export async function pollAgent(options: PollAgentOptions): Promise<Delivery | {
       continue;
     }
     if (signal?.aborted) throw abortError();
-    const authority: LeaseAuthority = {
-      version: 1,
-      relayId: currentRelayId,
-      workerId: result.workerId,
-      leaseId: result.leaseId,
-      eventId: result.event.id,
-      token: registered.token,
-    };
-    await writeFile(leaseFile(options.root, authority.leaseId), JSON.stringify(authority), { encoding: "utf8", mode: 0o600, flag: "wx" });
-    await chmod(leaseFile(options.root, authority.leaseId), 0o600);
+    await persistAuthority(options.root, currentRelayId, registered.token, result);
     return result;
+  }
+}
+
+export async function notifyAgent(options: NotifyAgentOptions): Promise<void> {
+  if (options.capabilities.maxConcurrent !== 1) throw new Error("notification polling requires maxConcurrent to be 1");
+  if (options.capabilities.allowedDefinitions.length === 0 || options.capabilities.allowedDefinitions.some((entry) => entry.length === 0)) {
+    throw new Error("notification polling requires at least one definition");
+  }
+  if (!options.capabilities.correlationId) throw new Error("notification polling requires a correlation id");
+  if (options.signal?.aborted) throw abortError();
+
+  const fetchFn = options.fetch ?? globalThis.fetch;
+  const currentRelayId = relayId(options.runtime.token);
+  const directory = ensureLeaseDirectory(options.root);
+  const activeLeaseId = await removeStaleLeases(directory, currentRelayId, options.capabilities.workerId);
+  if (activeLeaseId !== undefined) throw new Error(`active delivery must be settled before polling: ${activeLeaseId}`);
+
+  let registered = await registration(options.runtime, options.capabilities, fetchFn, options.signal);
+  let transport = new HttpWorkerTransport({ baseUrl: `http://127.0.0.1:${options.runtime.port}`, token: registered.token, fetch: fetchFn });
+  const pollSignal = options.signal ?? new AbortController().signal;
+  while (true) {
+    let delivery: Delivery | undefined;
+    try {
+      delivery = await transport.pollNotification(pollSignal);
+    } catch (error) {
+      if (error instanceof HttpWorkerTransportError && error.status === 401) {
+        registered = await registration(options.runtime, options.capabilities, fetchFn, options.signal);
+        transport = new HttpWorkerTransport({ baseUrl: `http://127.0.0.1:${options.runtime.port}`, token: registered.token, fetch: fetchFn });
+        continue;
+      }
+      if (options.signal?.aborted) throw abortError();
+      throw safeError(error, [options.runtime.token, registered.token]);
+    }
+    if (delivery === undefined) continue;
+    await persistAuthority(options.root, currentRelayId, registered.token, delivery);
+    await replyAgent({ root: options.root, runtime: options.runtime, leaseId: delivery.leaseId, action: "start", signal: options.signal, fetch: fetchFn });
+    await options.writePayload(delivery.event.payload);
+    await replyAgent({
+      root: options.root,
+      runtime: options.runtime,
+      leaseId: delivery.leaseId,
+      action: "complete",
+      body: { result: { delivered: true }, effects: [] },
+      signal: options.signal,
+      fetch: fetchFn,
+    });
+    return;
   }
 }
 

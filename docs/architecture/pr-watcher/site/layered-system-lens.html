@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080807">
+  <meta name="description" content="A map-first systems reading of the deterministic Open Relay PR watcher architecture.">
+  <title>Layered System Lens — Open Relay PR Watcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600&family=Alumni+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="layered-system-lens.css">
+</head>
+<body id="layout-top" data-layout="layered-system-lens"><!--
+  THESIS: The runtime map is the system contract; six lenses make ownership and failure boundaries inspectable without changing the path.
+  OWN-WORLD: Black paper, warm ivory, signal gold, ruled ledgers, and native links to the validated Archify viewers.
+  STORY: Start with the complete runtime, then trace evidence, decisions, settlement, delivery, resilience, and the future aggregation seam.
+  FIRST VIEWPORT: The runtime architecture viewer owns most of the opening; a compact lens index follows as the first navigation layer.
+  FORM: Layered System Lens; a map-first ledger for reviewers who need to locate an invariant before challenging an implementation detail.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+  -->
+  <a class="skip-link" href="#lens-ledger">Skip to lens ledger</a>
+
+  <main class="lens-page">
+    <header class="masthead">
+      <div>
+        <p class="protocol">Open Relay / architecture reading 03</p>
+        <h1>Layered System Lens</h1>
+      </div>
+      <p class="masthead-note">A map-first reading of one factual notification.</p>
+    </header>
+
+    <section class="map-opening" id="system-map" aria-labelledby="map-title">
+      <div class="section-intro">
+        <p class="protocol gold">01 / runtime map</p>
+        <h2 id="map-title">The connector owns the facts. Relay owns durable delivery.</h2>
+        <p>REST and GraphQL provide evidence to connector-owned analysis. The connector sends the event to the durable Relay queue. <code>relay notify</code> prints the notification. Review the map. Then select a lens. The map shows the shared boundary for all sequences.</p>
+      </div>
+      <div class="viewer-shell map-viewer">
+        <iframe src="../runtime.architecture.html" title="Runtime architecture: REST and GraphQL evidence through connector analysis, Relay, and relay notify"></iframe>
+        <div class="viewer-meta">
+          <span>Runtime architecture / validated Archify viewer</span>
+          <a href="../runtime.architecture.html" target="_blank" rel="noreferrer">Open viewer</a>
+        </div>
+      </div>
+    </section>
+
+    <nav class="lens-nav" aria-label="System lenses">
+      <p class="protocol">Select a lens</p>
+      <div class="lens-nav-links">
+        <a href="#evidence">Evidence</a>
+        <a href="#decisions">Decisions</a>
+        <a href="#settlement">Settlement</a>
+        <a href="#delivery">Delivery</a>
+        <a href="#resilience">Resilience</a>
+        <a href="#future">Future aggregation</a>
+      </div>
+    </nav>
+
+    <section class="ledger" id="lens-ledger" aria-labelledby="ledger-title">
+      <div class="section-intro ledger-intro">
+        <p class="protocol gold">02 / lens ledger</p>
+        <h2 id="ledger-title">Six boundaries define one review path.</h2>
+        <p>Each lens lists trusted inputs, one invariant, one result, and one failure boundary. Each failure boundary keeps unrelated work active.</p>
+      </div>
+
+      <div class="lens-grid">
+        <article class="lens" id="evidence" aria-labelledby="evidence-title">
+          <header class="lens-heading">
+            <p class="protocol">Lens 01</p>
+            <h3 id="evidence-title">Evidence</h3>
+            <p>The connector gets the authoritative review state once. It bounds the state and creates a digest.</p>
+          </header>
+          <dl class="lens-facts">
+            <div><dt>Owned inputs</dt><dd>Repository mode, reviewer logins, current head, GraphQL review-thread pages, and configured provider root authors.</dd></div>
+            <div><dt>Invariant</dt><dd><strong>GitHub supplies the resolution state.</strong> <code>isResolved</code> and the root author determine the evidence. Comment bodies are untrusted data.</dd></div>
+            <div><dt>Emitted result</dt><dd>The connector emits a bounded evidence snapshot. The snapshot includes deterministic pagination, counts, and a canonical digest.</dd></div>
+            <div><dt>Failure boundary</dt><dd>An error in GraphQL, pagination, truncation, or identity mapping stops unified verification for this path. Low-level events continue.</dd></div>
+          </dl>
+          <p class="lens-links"><a href="../setup-and-discovery.sequence.html" target="_blank" rel="noreferrer">Setup and identity discovery</a><a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer">Review evidence</a></p>
+        </article>
+
+        <article class="lens" id="decisions" aria-labelledby="decisions-title">
+          <header class="lens-heading">
+            <p class="protocol">Lens 02</p>
+            <h3 id="decisions-title">Decisions</h3>
+            <p>Fixed rules map raw checks and findings to a fixed action set.</p>
+          </header>
+          <dl class="lens-facts">
+            <div><dt>Owned inputs</dt><dd>Terminal Check Runs, unresolved configured-provider threads, and normalized Bugbot conclusions.</dd></div>
+            <div><dt>Invariant</dt><dd><code>verdict = actions.length === 0 ? success : action_required</code>. The same evidence always produces one verdict.</dd></div>
+            <div><dt>Emitted result</dt><dd>The connector emits a deterministic verdict and ordered actions. Each action identifies a CI failure, an unresolved finding, or an ambiguous neutral result.</dd></div>
+            <div><dt>Failure boundary</dt><dd>Malformed or ambiguous mappings stop unified verification for this path. Configured automation and generic CI events continue.</dd></div>
+          </dl>
+          <p class="lens-links"><a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer">Heuristic decisions</a></p>
+        </article>
+
+        <article class="lens" id="settlement" aria-labelledby="settlement-title">
+          <header class="lens-heading">
+            <p class="protocol">Lens 03</p>
+            <h3 id="settlement-title">Settlement</h3>
+            <p>The connector creates a notification only from stable evidence for the current head.</p>
+          </header>
+          <dl class="lens-facts">
+            <div><dt>Owned inputs</dt><dd>Verdict, canonical payload identity, observed commit head, continuous observation state, and one-shot mode.</dd></div>
+            <div><dt>Invariant</dt><dd>Continuous mode requires two identical eligible observations. A changed head resets the observation. The connector checks the final head before emission.</dd></div>
+            <div><dt>Emitted result</dt><dd>The connector emits one action-required or success notification for an accepted identity. Process state prevents replay of that identity.</dd></div>
+            <div><dt>Failure boundary</dt><dd>Head drift, pending CI, or a transient evidence error delays or stops settlement. Low-level event production continues.</dd></div>
+          </dl>
+          <p class="lens-links"><a href="../continuous-action-required.sequence.html" target="_blank" rel="noreferrer">Continuous action-required settlement</a><a href="../continuous-success.sequence.html" target="_blank" rel="noreferrer">Continuous successful settlement</a><a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer">One-shot reconciliation and replay</a><a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer">Evidence change and re-evaluation</a></p>
+        </article>
+
+        <article class="lens" id="delivery" aria-labelledby="delivery-title">
+          <header class="lens-heading">
+            <p class="protocol">Lens 04</p>
+            <h3 id="delivery-title">Delivery</h3>
+            <p>The notification worker prints before it completes the event.</p>
+          </header>
+          <dl class="lens-facts">
+            <div><dt>Owned inputs</dt><dd>The worker receives one Relay event for one correlation. <code>relay notify</code> hides registration and leasing. The worker prints to stdout.</dd></div>
+            <div><dt>Invariant</dt><dd>The print succeeds before completion. Delivery is at least once. The worker must not lose an event silently.</dd></div>
+            <div><dt>Emitted result</dt><dd>The worker prints one JSON line to stdout. It then completes the event.</dd></div>
+            <div><dt>Failure boundary</dt><dd>A crash before completion leaves the event available for lease expiry and replay. Registration and leasing remain outside the worker path.</dd></div>
+          </dl>
+          <p class="lens-links"><a href="../notification-delivery.sequence.html" target="_blank" rel="noreferrer">Single-consumer notification delivery</a></p>
+        </article>
+
+        <article class="lens" id="resilience" aria-labelledby="resilience-title">
+          <header class="lens-heading">
+            <p class="protocol">Lens 05</p>
+            <h3 id="resilience-title">Resilience</h3>
+            <p>Failures remain in the repository or path that owns them.</p>
+          </header>
+          <dl class="lens-facts">
+            <div><dt>Owned inputs</dt><dd>Connector authentication, repository verification paths, GraphQL responses, Relay availability, and head observations.</dd></div>
+            <div><dt>Invariant</dt><dd>An authentication failure stops the connector. Other failures remain repository- or path-scoped. They do not stop sibling work.</dd></div>
+            <div><dt>Emitted result</dt><dd>Low-level events continue. Relay retries eligible delivery. Isolated paths report or delay only their own result.</dd></div>
+            <div><dt>Failure boundary</dt><dd>GraphQL errors, invalid mappings, Relay outages, and head drift stop only the affected unified path. Configured automation and generic CI events continue.</dd></div>
+          </dl>
+          <p class="lens-links"><a href="../failure-isolation.sequence.html" target="_blank" rel="noreferrer">Failure isolation and retry</a></p>
+        </article>
+
+        <article class="lens" id="future" aria-labelledby="future-title">
+          <header class="lens-heading">
+            <p class="protocol">Lens 06</p>
+            <h3 id="future-title">Future aggregation</h3>
+            <p>The first producer includes a boundary for a future reducer. It does not include the reducer.</p>
+          </header>
+          <dl class="lens-facts">
+            <div><dt>Owned inputs</dt><dd>Correlated low-level events and the existing generic notification delivery contract.</dd></div>
+            <div><dt>Invariant</dt><dd>The design does not add a projection engine before a second use case exists. A migration must preserve or version producer and idempotency rules.</dd></div>
+            <div><dt>Emitted result</dt><dd>A future typed durable reducer can consume the event family. It can reuse notification delivery. The current watcher does not emit a projection.</dd></div>
+            <div><dt>Failure boundary</dt><dd>A future aggregation failure cannot change connector-owned facts or the generic delivery contract.</dd></div>
+          </dl>
+          <p class="lens-links"><a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer">Future aggregation family</a></p>
+        </article>
+      </div>
+    </section>
+
+    <section class="atlas" id="sequence-atlas" aria-labelledby="atlas-title">
+      <div class="section-intro">
+        <p class="protocol gold">03 / sequence atlas</p>
+        <h2 id="atlas-title">Sequences in README order</h2>
+        <p>Use the index to follow the sequence order. Each link opens its Archify viewer.</p>
+      </div>
+      <ol class="atlas-list">
+        <li><span class="atlas-number">02</span><span><strong>Setup and identity discovery</strong><small>Generated contracts remain inactive until setup identifies the repository mode, provider identities, reviewer logins, and process supervision.</small></span><a href="../setup-and-discovery.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">03</span><span><strong>Review evidence</strong><small>The connector uses GraphQL pages to match providers and read resolution state. It creates the evidence digest and enforces payload limits.</small></span><a href="../review-evidence.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">04</span><span><strong>Heuristic decisions</strong><small>Fixed rules map failed CI, unresolved findings, and ambiguous neutral Bugbot results to actions.</small></span><a href="../heuristic-decisions.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">05</span><span><strong>Continuous action-required settlement</strong><small>Two stable terminal observations and a final head fence produce an action-required notification.</small></span><a href="../continuous-action-required.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">06</span><span><strong>Continuous successful settlement</strong><small>Two stable all-clear observations produce a success notification with no actions.</small></span><a href="../continuous-success.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">07</span><span><strong>One-shot reconciliation and replay</strong><small><code>--once</code> evaluates one observation immediately. Canonical event identity makes restart replay idempotent.</small></span><a href="../once-and-replay.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">08</span><span><strong>Single-consumer notification delivery</strong><small>The worker claims one event. It prints one JSON line. It completes the event after the print succeeds. A crash before completion permits replay.</small></span><a href="../notification-delivery.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">09</span><span><strong>Evidence change and re-evaluation</strong><small>Thread resolution can change the identity for the same head. The new identity can produce a new notification.</small></span><a href="../evidence-change.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">10</span><span><strong>Failure isolation and retry</strong><small>GraphQL errors, Relay outages, and head drift stop only the affected path.</small></span><a href="../failure-isolation.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+        <li><span class="atlas-number">11</span><span><strong>Future aggregation family</strong><small>A future durable reducer can consume correlated low-level events and reuse notification delivery.</small></span><a href="../future-aggregation-family.sequence.html" target="_blank" rel="noreferrer">Open viewer</a></li>
+      </ol>
+    </section>
+  </main>
+</body>
+</html>

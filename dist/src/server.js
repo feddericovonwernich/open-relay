@@ -261,6 +261,14 @@ export function createRelayServer(options) {
                 send(request, response, 200, delivery ?? null);
             return;
         }
+        if (method === "POST" && path === "/v1/notification/poll") {
+            const { registration } = worker(request);
+            const signal = requestSignal(request, response);
+            const delivery = await options.dispatcher.pollNotification(registration, signal);
+            if (!response.writableEnded)
+                send(request, response, 200, delivery ?? null);
+            return;
+        }
         const leaseMatch = /^\/v1\/deliveries\/([^/]+)\/(start|renew|progress|control|cancelled|complete|fail|effect-intent|effect-confirmation)$/.exec(path);
         if (leaseMatch) {
             const leaseId = decodeURIComponent(leaseMatch[1]);

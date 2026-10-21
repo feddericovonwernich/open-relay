@@ -1,0 +1,307 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Single-consumer Notification Delivery",
+    "output": "notification-delivery.sequence.html",
+    "viewBox": [
+      1700,
+      900
+    ],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "hidden-lease",
+        "label": "Hidden lease lifecycle",
+        "focus": [
+          "supervisor",
+          "notify",
+          "authority-files",
+          "relay-http",
+          "dispatcher",
+          "store",
+          "agent"
+        ],
+        "note": "The CLI registers, claims, starts, prints, and completes without exposing protocol ceremony."
+      },
+      {
+        "id": "at-least-once",
+        "label": "At-least-once replay",
+        "focus": [
+          "notify",
+          "dispatcher",
+          "store",
+          "agent"
+        ],
+        "note": "A crash after print but before acknowledgment may deliver the same payload again after lease expiry."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "supervisor",
+      "type": "cloud",
+      "label": "Process Supervisor"
+    },
+    {
+      "id": "notify",
+      "type": "frontend",
+      "label": "relay notify"
+    },
+    {
+      "id": "authority-files",
+      "type": "database",
+      "label": "Lease Files"
+    },
+    {
+      "id": "relay-http",
+      "type": "security",
+      "label": "Relay HTTP"
+    },
+    {
+      "id": "dispatcher",
+      "type": "backend",
+      "label": "Dispatcher"
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "SQLite Store"
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "Coding Agent"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 535,
+      "label": "Successful delivery"
+    },
+    {
+      "from": 545,
+      "to": 820,
+      "label": "Leased payload: crash after print, before acknowledgment"
+    }
+  ],
+  "messages": [
+    {
+      "id": "start-notify",
+      "from": "supervisor",
+      "to": "notify",
+      "y": 165,
+      "label": "start with definition and PR correlation",
+      "variant": "dashed"
+    },
+    {
+      "id": "register",
+      "from": "notify",
+      "to": "relay-http",
+      "y": 180,
+      "label": "register ephemeral notify worker",
+      "variant": "security"
+    },
+    {
+      "id": "worker-token",
+      "from": "relay-http",
+      "to": "notify",
+      "y": 208,
+      "label": "scoped worker token",
+      "variant": "return"
+    },
+    {
+      "id": "poll-notification",
+      "from": "notify",
+      "to": "relay-http",
+      "y": 236,
+      "label": "poll notification-only endpoint",
+      "variant": "emphasis"
+    },
+    {
+      "id": "acquire-notification",
+      "from": "relay-http",
+      "to": "store",
+      "y": 256,
+      "label": "acquire notification and lease",
+      "variant": "security"
+    },
+    {
+      "id": "lease-granted",
+      "from": "store",
+      "to": "relay-http",
+      "y": 284,
+      "label": "payload and lease",
+      "variant": "return"
+    },
+    {
+      "id": "delivery",
+      "from": "relay-http",
+      "to": "notify",
+      "y": 304,
+      "label": "matching analyzed payload and lease",
+      "variant": "return"
+    },
+    {
+      "id": "persist-authority",
+      "from": "notify",
+      "to": "authority-files",
+      "y": 332,
+      "label": "persist mode-0600 lease authority",
+      "variant": "security"
+    },
+    {
+      "id": "authority-persisted",
+      "from": "authority-files",
+      "to": "notify",
+      "y": 360,
+      "label": "lease authority saved",
+      "variant": "return"
+    },
+    {
+      "id": "start-transition",
+      "from": "notify",
+      "to": "relay-http",
+      "y": 388,
+      "label": "start delivery",
+      "variant": "default"
+    },
+    {
+      "id": "start-ok",
+      "from": "relay-http",
+      "to": "notify",
+      "y": 416,
+      "label": "delivery started",
+      "variant": "return"
+    },
+    {
+      "id": "print-payload",
+      "from": "notify",
+      "to": "agent",
+      "y": 444,
+      "label": "write one analyzed JSON line",
+      "variant": "emphasis"
+    },
+    {
+      "id": "stdout-ok",
+      "from": "agent",
+      "to": "notify",
+      "y": 472,
+      "label": "stdout write completed",
+      "variant": "return"
+    },
+    {
+      "id": "complete-delivery",
+      "from": "notify",
+      "to": "relay-http",
+      "y": 500,
+      "label": "complete with delivered true",
+      "variant": "emphasis"
+    },
+    {
+      "id": "completion-ok",
+      "from": "relay-http",
+      "to": "notify",
+      "y": 528,
+      "label": "completion committed",
+      "variant": "return"
+    },
+    {
+      "id": "second-print",
+      "from": "notify",
+      "to": "agent",
+      "y": 556,
+      "label": "write leased payload to stdout",
+      "variant": "emphasis"
+    },
+    {
+      "id": "second-stdout-ok",
+      "from": "agent",
+      "to": "notify",
+      "y": 584,
+      "label": "stdout write completed",
+      "variant": "return"
+    },
+    {
+      "id": "lease-expiry",
+      "from": "store",
+      "to": "dispatcher",
+      "y": 612,
+      "label": "lease expired; retry scheduled",
+      "variant": "dashed"
+    },
+    {
+      "id": "restart",
+      "from": "supervisor",
+      "to": "notify",
+      "y": 640,
+      "label": "restart relay notify",
+      "variant": "dashed"
+    },
+    {
+      "id": "reacquire",
+      "from": "notify",
+      "to": "dispatcher",
+      "y": 668,
+      "label": "reacquire retryable notification",
+      "variant": "security"
+    },
+    {
+      "id": "reacquired",
+      "from": "dispatcher",
+      "to": "notify",
+      "y": 696,
+      "label": "same payload and new lease",
+      "variant": "return"
+    },
+    {
+      "id": "reprint",
+      "from": "notify",
+      "to": "agent",
+      "y": 724,
+      "label": "write payload to stdout again",
+      "variant": "emphasis"
+    },
+    {
+      "id": "reprint-ok",
+      "from": "agent",
+      "to": "notify",
+      "y": 752,
+      "label": "stdout write completed",
+      "variant": "return"
+    },
+    {
+      "id": "retry-complete",
+      "from": "notify",
+      "to": "relay-http",
+      "y": 780,
+      "label": "complete retried delivery",
+      "variant": "emphasis"
+    },
+    {
+      "id": "retry-completion-ok",
+      "from": "relay-http",
+      "to": "notify",
+      "y": 808,
+      "label": "completion committed",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    { "participant": "notify", "from": 160, "to": 532, "type": "frontend" },
+    { "participant": "notify", "from": 551, "to": 592, "type": "frontend" },
+    { "participant": "notify", "from": 635, "to": 816, "type": "frontend" },
+    { "participant": "relay-http", "from": 175, "to": 216, "type": "security" },
+    { "participant": "relay-http", "from": 231, "to": 312, "type": "security" },
+    { "participant": "relay-http", "from": 383, "to": 424, "type": "security" },
+    { "participant": "relay-http", "from": 495, "to": 536, "type": "security" },
+    { "participant": "relay-http", "from": 775, "to": 816, "type": "security" },
+    { "participant": "dispatcher", "from": 607, "to": 620, "type": "backend" },
+    { "participant": "dispatcher", "from": 663, "to": 704, "type": "backend" },
+    { "participant": "agent", "from": 439, "to": 480, "type": "external" },
+    { "participant": "agent", "from": 551, "to": 592, "type": "external" },
+    { "participant": "agent", "from": 719, "to": 760, "type": "external" }
+  ]
+}

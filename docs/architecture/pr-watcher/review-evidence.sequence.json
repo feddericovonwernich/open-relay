@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Authoritative and Bounded Review Evidence",
+    "output": "review-evidence.sequence.html",
+    "viewBox": [1550, 700],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "paginate",
+        "label": "Paginate review threads",
+        "focus": ["connector", "github-graphql"],
+        "note": "Fetch every thread identity needed for authoritative unresolved counts and digest calculation."
+      },
+      {
+        "id": "classify",
+        "label": "Classify provider evidence",
+        "focus": ["classifier", "budgeter"],
+        "note": "Match root-author logins, trust isResolved, and preserve outdated state without suppressing findings."
+      },
+      {
+        "id": "bound",
+        "label": "Bound the payload",
+        "focus": ["budgeter", "payload"],
+        "note": "Include deterministic bodies within limits while the full evidence digest covers omitted findings."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "connector", "type": "backend", "label": "GitHub Connector" },
+    { "id": "github-graphql", "type": "external", "label": "GitHub GraphQL" },
+    { "id": "classifier", "type": "security", "label": "Thread Classifier" },
+    { "id": "budgeter", "type": "backend", "label": "Evidence Budgeter" },
+    { "id": "payload", "type": "messagebus", "label": "Review Evidence" }
+  ],
+  "segments": [
+    { "from": 150, "to": 325, "label": "Complete authoritative input" },
+    { "from": 335, "to": 485, "label": "Provider and resolution classification" },
+    { "from": 495, "to": 620, "label": "Deterministic wire bounds" }
+  ],
+  "messages": [
+    { "id": "query-first-page", "from": "connector", "to": "github-graphql", "y": 165, "label": "reviewThreads(first: 100)", "variant": "security" },
+    { "id": "first-page", "from": "github-graphql", "to": "connector", "y": 200, "label": "nodes + pageInfo.hasNextPage", "variant": "return" },
+    { "id": "query-next-page", "from": "connector", "to": "github-graphql", "y": 235, "label": "reviewThreads(after: endCursor)", "variant": "security" },
+    { "id": "final-page", "from": "github-graphql", "to": "connector", "y": 270, "label": "final nodes + hasNextPage false", "variant": "return" },
+    { "id": "all-thread-facts", "from": "connector", "to": "classifier", "y": 310, "label": "complete thread identities and root comments", "variant": "emphasis" },
+    { "id": "match-authors", "from": "classifier", "to": "budgeter", "y": 350, "label": "configured root-author matches", "variant": "security" },
+    { "id": "filter-resolution", "from": "classifier", "to": "budgeter", "y": 385, "label": "unresolved threads, including outdated", "variant": "security" },
+    { "id": "digest-all", "from": "classifier", "to": "budgeter", "y": 425, "label": "complete-evidence SHA-256", "variant": "emphasis" },
+    { "id": "sorted-findings", "from": "budgeter", "to": "payload", "y": 465, "label": "findings sorted by provider, path, line, thread ID", "variant": "default" },
+    { "id": "cap-findings", "from": "budgeter", "to": "payload", "y": 510, "label": "up to 20 finding bodies", "variant": "default" },
+    { "id": "truncate-bodies", "from": "budgeter", "to": "payload", "y": 550, "label": "2,000-code-point bodies; 48 KiB total", "variant": "default" },
+    { "id": "final-evidence", "from": "payload", "to": "connector", "y": 600, "label": "counts, truncation flags, digest, findings", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "connector", "from": 160, "to": 610, "type": "backend" },
+    { "participant": "github-graphql", "from": 160, "to": 210, "type": "external" },
+    { "participant": "github-graphql", "from": 230, "to": 280, "type": "external" },
+    { "participant": "classifier", "from": 305, "to": 435, "type": "security" },
+    { "participant": "budgeter", "from": 345, "to": 560, "type": "backend" }
+  ]
+}

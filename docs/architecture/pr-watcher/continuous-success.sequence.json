@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Continuous Settlement with Successful Verdict",
+    "output": "continuous-success.sequence.html",
+    "viewBox": [1550, 780],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "first-observation",
+        "label": "First observation",
+        "focus": ["github-rest", "github-graphql", "connector", "analyzer"],
+        "note": "All checks pass and no configured provider thread is unresolved, but stability still requires a second observation."
+      },
+      {
+        "id": "success-emission",
+        "label": "Success emission",
+        "focus": ["connector", "analyzer", "relay", "notify", "agent"],
+        "note": "The stable payload has verdict success and an empty actions array."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "github-rest", "type": "external", "label": "GitHub REST" },
+    { "id": "github-graphql", "type": "external", "label": "GitHub GraphQL" },
+    { "id": "connector", "type": "backend", "label": "GitHub Connector" },
+    { "id": "analyzer", "type": "backend", "label": "Heuristics" },
+    { "id": "relay", "type": "database", "label": "Relay" },
+    { "id": "notify", "type": "frontend", "label": "relay notify" },
+    { "id": "agent", "type": "external", "label": "Coding Agent" }
+  ],
+  "segments": [
+    { "from": 150, "to": 345, "label": "Observation 1" },
+    { "from": 355, "to": 700, "label": "Observation 2 and delivery" }
+  ],
+  "messages": [
+    { "id": "load-first", "from": "connector", "to": "github-rest", "y": 165, "label": "load configured artifacts + terminal checks", "variant": "default" },
+    { "id": "passing-first", "from": "github-rest", "to": "connector", "y": 195, "label": "success, neutral, or skipped only", "variant": "return" },
+    { "id": "threads-first", "from": "connector", "to": "github-graphql", "y": 230, "label": "query reviewThreads", "variant": "security" },
+    { "id": "resolved-first", "from": "github-graphql", "to": "connector", "y": 260, "label": "zero unresolved configured threads", "variant": "return" },
+    { "id": "analyze-first", "from": "connector", "to": "analyzer", "y": 295, "label": "derive verdict and actions", "variant": "emphasis" },
+    { "id": "success-first", "from": "analyzer", "to": "connector", "y": 330, "label": "success; actions []; consecutive = 1", "variant": "return" },
+    { "id": "load-second", "from": "connector", "to": "github-rest", "y": 370, "label": "reload same current-head facts", "variant": "default" },
+    { "id": "passing-second", "from": "github-rest", "to": "connector", "y": 400, "label": "same passing checks", "variant": "return" },
+    { "id": "threads-second", "from": "connector", "to": "github-graphql", "y": 430, "label": "reload reviewThreads", "variant": "security" },
+    { "id": "resolved-second", "from": "github-graphql", "to": "connector", "y": 460, "label": "same resolved evidence", "variant": "return" },
+    { "id": "stable-success", "from": "connector", "to": "analyzer", "y": 490, "label": "analyze same canonical identity", "variant": "emphasis" },
+    { "id": "stable-success-result", "from": "analyzer", "to": "connector", "y": 518, "label": "success; consecutive = 2", "variant": "return" },
+    { "id": "head-fence", "from": "connector", "to": "github-rest", "y": 546, "label": "verify current head", "variant": "security" },
+    { "id": "head-current", "from": "github-rest", "to": "connector", "y": 574, "label": "head SHA unchanged", "variant": "return" },
+    { "id": "accept-success", "from": "connector", "to": "relay", "y": 602, "label": "accept success notification", "variant": "emphasis" },
+    { "id": "success-accepted", "from": "relay", "to": "connector", "y": 630, "label": "201 accepted", "variant": "return" },
+    { "id": "claim-success", "from": "relay", "to": "notify", "y": 658, "label": "publish single-consumer delivery", "variant": "dashed" },
+    { "id": "print-success", "from": "notify", "to": "agent", "y": 686, "label": "emit success payload; actions []", "variant": "dashed" }
+  ],
+  "activations": [
+    { "participant": "connector", "from": 160, "to": 338, "type": "backend" },
+    { "participant": "connector", "from": 365, "to": 638, "type": "backend" },
+    { "participant": "github-rest", "from": 160, "to": 203, "type": "external" },
+    { "participant": "github-rest", "from": 365, "to": 408, "type": "external" },
+    { "participant": "github-rest", "from": 541, "to": 582, "type": "external" },
+    { "participant": "github-graphql", "from": 225, "to": 268, "type": "external" },
+    { "participant": "github-graphql", "from": 425, "to": 468, "type": "external" },
+    { "participant": "analyzer", "from": 290, "to": 338, "type": "backend" },
+    { "participant": "analyzer", "from": 485, "to": 526, "type": "backend" },
+    { "participant": "relay", "from": 597, "to": 638, "type": "database" },
+    { "participant": "relay", "from": 653, "to": 666, "type": "database" },
+    { "participant": "notify", "from": 653, "to": 694, "type": "frontend" }
+  ]
+}

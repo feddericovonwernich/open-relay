@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Deterministic Verification Heuristics",
+    "output": "heuristic-decisions.sequence.html",
+    "viewBox": [1600, 760],
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "ci-rule",
+        "label": "CI failure rule",
+        "focus": ["evidence", "analyzer", "payload"],
+        "note": "Any terminal conclusion outside success, neutral, or skipped adds the CI investigation action."
+      },
+      {
+        "id": "review-rule",
+        "label": "Review finding rule",
+        "focus": ["evidence", "analyzer", "payload"],
+        "note": "Authoritative unresolved configured-provider threads add one bounded review action."
+      },
+      {
+        "id": "neutral-rule",
+        "label": "Ambiguous Bugbot rule",
+        "focus": ["evidence", "analyzer", "payload"],
+        "note": "Neutral Bugbot without unresolved threads remains attention-required rather than silently successful."
+      },
+      {
+        "id": "success-rule",
+        "label": "Success rule",
+        "focus": ["evidence", "analyzer", "payload"],
+        "note": "Only an empty action list produces verdict success."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "evidence", "type": "database", "label": "Canonical Evidence" },
+    { "id": "analyzer", "type": "backend", "label": "Pure Heuristics" },
+    { "id": "payload", "type": "messagebus", "label": "Verification Payload" }
+  ],
+  "segments": [
+    { "from": 150, "to": 280, "label": "Failed CI" },
+    { "from": 290, "to": 420, "label": "Unresolved provider threads" },
+    { "from": 430, "to": 555, "label": "Neutral Bugbot ambiguity" },
+    { "from": 565, "to": 680, "label": "All clear" }
+  ],
+  "messages": [
+    { "id": "ci-input", "from": "evidence", "to": "analyzer", "y": 165, "label": "terminal checks include failure/cancelled/null", "variant": "default" },
+    { "id": "ci-action", "from": "analyzer", "to": "payload", "y": 205, "label": "add investigate_ci_failures", "variant": "emphasis" },
+    { "id": "ci-verdict", "from": "payload", "to": "analyzer", "y": 250, "label": "verdict action_required", "variant": "return" },
+    { "id": "review-input", "from": "evidence", "to": "analyzer", "y": 305, "label": "unresolved Bugbot/Copilot threads > 0", "variant": "security" },
+    { "id": "review-action", "from": "analyzer", "to": "payload", "y": 345, "label": "add resolve_review_findings", "variant": "emphasis" },
+    { "id": "review-verdict", "from": "payload", "to": "analyzer", "y": 390, "label": "verdict action_required", "variant": "return" },
+    { "id": "neutral-input", "from": "evidence", "to": "analyzer", "y": 445, "label": "Bugbot neutral; unresolved Bugbot = 0", "variant": "default" },
+    { "id": "neutral-action", "from": "analyzer", "to": "payload", "y": 485, "label": "add verify_review_result", "variant": "emphasis" },
+    { "id": "neutral-verdict", "from": "payload", "to": "analyzer", "y": 530, "label": "verdict action_required", "variant": "return" },
+    { "id": "success-input", "from": "evidence", "to": "analyzer", "y": 580, "label": "passing checks; no findings; no ambiguity", "variant": "default" },
+    { "id": "success-output", "from": "analyzer", "to": "payload", "y": 625, "label": "actions []; verdict success", "variant": "emphasis" },
+    { "id": "frozen-payload", "from": "payload", "to": "analyzer", "y": 665, "label": "deeply frozen deterministic payload", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "analyzer", "from": 160, "to": 255, "type": "backend" },
+    { "participant": "analyzer", "from": 300, "to": 395, "type": "backend" },
+    { "participant": "analyzer", "from": 440, "to": 535, "type": "backend" },
+    { "participant": "analyzer", "from": 575, "to": 675, "type": "backend" }
+  ]
+}

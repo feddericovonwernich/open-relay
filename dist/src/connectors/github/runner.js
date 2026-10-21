@@ -1,5 +1,6 @@
 import { GitHubClient, GitHubClientError } from "./client.js";
 import { GitHubRelayEmitter, GitHubRelayEmitterError, ciSettledKey } from "./emitter.js";
+import { GitHubVerificationError, normalizeVerification, verificationKey } from "./verification.js";
 import { discoverPullRequest, discoverPullRequests, deriveSnapshotRequirements, loadPrSnapshot, mapConcurrent, verifyCurrentHead } from "./poller.js";
 import { settledCheckRuns } from "./ci.js";
 import { normalizeCiSettled } from "./normalize.js";
@@ -33,6 +34,7 @@ function limitedClient(client, limiter) {
         listCompletedCheckRuns: (repository, sha, signal) => limiter.run(() => client.listCompletedCheckRuns(repository, sha, signal), signal ?? new AbortController().signal),
         listCurrentCheckRuns: (repository, sha, signal) => limiter.run(() => client.listCurrentCheckRuns(repository, sha, signal), signal ?? new AbortController().signal),
         listReviews: (repository, number, signal) => limiter.run(() => client.listReviews(repository, number, signal), signal ?? new AbortController().signal),
+        listReviewThreads: (repository, number, signal) => limiter.run(() => client.listReviewThreads(repository, number, signal), signal ?? new AbortController().signal),
         getPullRequest: (repository, number, signal) => limiter.run(() => client.getPullRequest(repository, number, signal), signal ?? new AbortController().signal),
     };
 }
@@ -131,13 +133,49 @@ function stateFor(states, repository) {
         nextEligibleAt: 0,
         disabled: false,
         ciObservations: new Map(),
+        verificationTransientDelay: 0,
+        verificationNextEligibleAt: 0,
+        verificationObservations: new Map(),
     };
     states.set(repository, state);
     return state;
 }
+function logVerification(log, event, snapshot, code) {
+    const record = {
+        connector: "github",
+        event,
+        repository: snapshot.repository.fullName,
+        pullRequest: snapshot.pullRequest.number,
+        headSha: snapshot.pullRequest.headSha,
+    };
+    if (code !== undefined)
+        record.code = code;
+    log?.(JSON.stringify(record));
+}
+function clearVerificationObservation(state, pullRequestNumber, headSha) {
+    const previous = state.verificationObservations.get(pullRequestNumber);
+    if (previous === undefined) {
+        state.verificationObservations.set(pullRequestNumber, {
+            headSha,
+            identity: "",
+            consecutive: 0,
+            emittedIdentities: new Set(),
+        });
+    }
+    else if (previous.headSha !== headSha) {
+        state.verificationObservations.delete(pullRequestNumber);
+    }
+    else {
+        previous.consecutive = 0;
+    }
+}
 async function runRepository(options, client, repository, summary, states, signal, now, onFatal) {
     const repositoryName = repository.name;
     const state = stateFor(states, repositoryName);
+    const verification = repository.mode === "configured-tools-and-generic-check-runs"
+        ? options.config.verification
+        : undefined;
+    const verificationEnabled = verification !== undefined;
     if (state.disabled
         || signal.aborted
         || now() < state.nextEligibleAt
@@ -152,14 +190,14 @@ async function runRepository(options, client, repository, summary, states, signa
         state.nextEligibleAt = 0;
         const configured = repository.mode !== "generic-check-runs";
         const generic = repository.mode !== "configured-tools";
-        const ciEnabled = generic
-            && !options.disabledCiRepositories?.has(repositoryName);
+        const ciEnabled = generic && !options.disabledCiRepositories?.has(repositoryName);
+        const verificationChecks = verificationEnabled && !options.discover;
         const configuredRequirements = deriveSnapshotRequirements(options.config.triggers);
         const snapshots = await mapConcurrent(pullRequests, 4, async (pullRequest) => {
             const configuredSnapshot = configured
                 ? await loadPrSnapshot(client, repositoryName, pullRequest, configuredRequirements, signal)
                 : undefined;
-            const genericSnapshot = ciEnabled && (!options.discover || !configured)
+            const genericSnapshot = generic && (!options.discover || !configured) && (ciEnabled || verificationChecks)
                 ? await loadPrSnapshot(client, repositoryName, pullRequest, { checkRuns: "current", reviews: false }, signal)
                 : undefined;
             return { configuredSnapshot, genericSnapshot };
@@ -179,10 +217,12 @@ async function runRepository(options, client, repository, summary, states, signa
                 if (configuredSnapshot === undefined)
                     continue;
             }
+            let recognizedByTrigger = new Map();
+            let erroredTriggers = new Set();
             if (configuredSnapshot !== undefined) {
                 const snapshot = configuredSnapshot;
-                const recognizedByTrigger = new Map();
-                const erroredTriggers = new Set();
+                recognizedByTrigger = new Map();
+                erroredTriggers = new Set();
                 for (const trigger of options.config.triggers) {
                     if (options.disabledTriggers?.has(trigger.id))
                         continue;
@@ -283,77 +323,221 @@ async function runRepository(options, client, repository, summary, states, signa
                     }
                 }
             }
-            if (genericSnapshot === undefined)
-                continue;
-            const snapshot = genericSnapshot;
-            const checks = settledCheckRuns(snapshot);
-            if (checks === undefined) {
-                state.ciObservations.delete(snapshot.pullRequest.number);
-                continue;
-            }
-            summary.candidates += checks.length;
-            const identity = ciSettledKey(normalizeCiSettled(snapshot, checks));
-            const previous = state.ciObservations.get(snapshot.pullRequest.number);
-            const observation = previous === undefined || previous.headSha !== snapshot.pullRequest.headSha
-                ? { headSha: snapshot.pullRequest.headSha, identity, consecutive: 1, emittedIdentities: new Set() }
-                : previous;
-            if (observation !== previous) {
-                state.ciObservations.set(snapshot.pullRequest.number, observation);
-            }
-            else if (observation.identity !== identity) {
-                observation.identity = identity;
-                observation.consecutive = 1;
-            }
-            else {
-                observation.consecutive += 1;
-            }
-            if (options.emitter === undefined
-                || (!options.once && observation.consecutive < 2)
-                || observation.emittedIdentities.has(identity))
-                continue;
-            const verifyHead = options.headVerifier
-                ?? options.verifyCurrentHead
-                ?? ((candidate, verifySignal) => verifyCurrentHead(client, candidate, verifySignal));
-            try {
-                const current = await verifyHead({
-                    repository: repositoryName,
-                    pullRequestNumber: snapshot.pullRequest.number,
-                    artifactHeadSha: snapshot.pullRequest.headSha,
-                }, signal);
-                if (!current) {
+            if (genericSnapshot !== undefined) {
+                const snapshot = genericSnapshot;
+                const checks = settledCheckRuns(snapshot);
+                if (checks !== undefined) {
+                    if (ciEnabled)
+                        summary.candidates += checks.length;
+                    const identity = ciSettledKey(normalizeCiSettled(snapshot, checks));
+                    const previous = state.ciObservations.get(snapshot.pullRequest.number);
+                    const observation = previous === undefined || previous.headSha !== snapshot.pullRequest.headSha
+                        ? { headSha: snapshot.pullRequest.headSha, identity, consecutive: 1, emittedIdentities: new Set() }
+                        : previous;
+                    if (observation !== previous) {
+                        state.ciObservations.set(snapshot.pullRequest.number, observation);
+                    }
+                    else if (observation.identity !== identity) {
+                        observation.identity = identity;
+                        observation.consecutive = 1;
+                    }
+                    else {
+                        observation.consecutive += 1;
+                    }
+                    if (ciEnabled
+                        && options.emitter !== undefined
+                        && (options.once || observation.consecutive >= 2)
+                        && !observation.emittedIdentities.has(identity)) {
+                        const verifyHead = options.headVerifier
+                            ?? options.verifyCurrentHead
+                            ?? ((candidate, verifySignal) => verifyCurrentHead(client, candidate, verifySignal));
+                        try {
+                            const current = await verifyHead({
+                                repository: repositoryName,
+                                pullRequestNumber: snapshot.pullRequest.number,
+                                artifactHeadSha: snapshot.pullRequest.headSha,
+                            }, signal);
+                            if (!current) {
+                                state.ciObservations.delete(snapshot.pullRequest.number);
+                                summary.stale += 1;
+                            }
+                            else {
+                                const result = await options.emitter.emitCiSettled(snapshot, checks, signal);
+                                if (result === "emitted")
+                                    summary.emitted += 1;
+                                else
+                                    summary.replayed += 1;
+                                observation.emittedIdentities.add(identity);
+                            }
+                        }
+                        catch (error) {
+                            if (isAuthFailure(error) || isTransient(error))
+                                throw error;
+                            if (isFatalRelayFailure(error)) {
+                                onFatal(error);
+                                throw error;
+                            }
+                            if (isAbort(error, signal))
+                                throw error;
+                            if (error instanceof GitHubRelayEmitterError && (error.code === "ci_drift" || error.code === "ci_invalid")) {
+                                options.disabledCiRepositories?.add(repositoryName);
+                                summary.errors.push(`${error.code}: ${errorText(error)}`);
+                            }
+                            else {
+                                summary.errors.push(`emission ci ${snapshot.pullRequest.number}: ${errorText(error)}`);
+                            }
+                        }
+                    }
+                }
+                else {
                     state.ciObservations.delete(snapshot.pullRequest.number);
-                    summary.stale += 1;
-                    continue;
                 }
-                const result = await options.emitter.emitCiSettled(snapshot, checks, signal);
-                if (result === "emitted")
-                    summary.emitted += 1;
-                else
-                    summary.replayed += 1;
-                observation.emittedIdentities.add(identity);
             }
-            catch (error) {
-                if (isAuthFailure(error) || isTransient(error))
-                    throw error;
-                if (isFatalRelayFailure(error)) {
-                    onFatal(error);
-                    throw error;
+            if (verificationEnabled
+                && verification !== undefined
+                && configuredSnapshot !== undefined
+                && genericSnapshot !== undefined
+                && options.emitter !== undefined
+                && !options.discover
+                && !options.disabledVerificationRepositories?.has(repositoryName)) {
+                const snapshot = configuredSnapshot;
+                const number = snapshot.pullRequest.number;
+                const checks = settledCheckRuns(genericSnapshot);
+                const automationReady = options.config.triggers.every((trigger) => !options.disabledTriggers?.has(trigger.id)
+                    && !erroredTriggers.has(trigger.id)
+                    && (recognizedByTrigger.get(trigger.id)?.length ?? 0) > 0);
+                if (!automationReady) {
+                    clearVerificationObservation(state, number, snapshot.pullRequest.headSha);
+                    logVerification(options.log, "verification_pending_automation", snapshot);
                 }
-                if (isAbort(error, signal))
-                    throw error;
-                if (error instanceof GitHubRelayEmitterError && (error.code === "ci_drift" || error.code === "ci_invalid")) {
-                    options.disabledCiRepositories?.add(repositoryName);
-                    summary.errors.push(`${error.code}: ${errorText(error)}`);
+                else if (checks === undefined) {
+                    clearVerificationObservation(state, number, snapshot.pullRequest.headSha);
+                    logVerification(options.log, "verification_pending_checks", snapshot);
+                }
+                else if (now() < state.verificationNextEligibleAt) {
                     continue;
                 }
-                summary.errors.push(`emission ci ${snapshot.pullRequest.number}: ${errorText(error)}`);
+                else {
+                    let threads;
+                    try {
+                        threads = await client.listReviewThreads(repositoryName, number, signal);
+                        state.verificationTransientDelay = 0;
+                        state.verificationNextEligibleAt = 0;
+                    }
+                    catch (error) {
+                        if (isAuthFailure(error))
+                            throw error;
+                        if (isAbort(error, signal))
+                            throw error;
+                        clearVerificationObservation(state, number, snapshot.pullRequest.headSha);
+                        if (isTransient(error)) {
+                            state.verificationTransientDelay = state.verificationTransientDelay === 0
+                                ? options.config.pollIntervalMs
+                                : Math.min(options.config.pollIntervalMs * 8, state.verificationTransientDelay * 2);
+                            state.verificationNextEligibleAt = now() + state.verificationTransientDelay;
+                        }
+                        summary.errors.push(`verification ${repositoryName}: ${errorText(error)}`);
+                        logVerification(options.log, "verification_error", snapshot, error instanceof GitHubClientError ? error.code : undefined);
+                        continue;
+                    }
+                    let payload;
+                    try {
+                        payload = normalizeVerification(snapshot, options.config.triggers.flatMap((trigger) => recognizedByTrigger.get(trigger.id) ?? []), checks, threads, verification);
+                    }
+                    catch (error) {
+                        const code = error instanceof GitHubVerificationError ? error.code : "verification_error";
+                        clearVerificationObservation(state, number, snapshot.pullRequest.headSha);
+                        summary.errors.push(`${code}: ${errorText(error)}`);
+                        logVerification(options.log, "verification_error", snapshot, code);
+                        continue;
+                    }
+                    let identity;
+                    try {
+                        identity = verificationKey(payload);
+                    }
+                    catch (error) {
+                        const code = error instanceof GitHubVerificationError ? error.code : "verification_error";
+                        clearVerificationObservation(state, number, snapshot.pullRequest.headSha);
+                        summary.errors.push(`${code}: ${errorText(error)}`);
+                        logVerification(options.log, "verification_error", snapshot, code);
+                        continue;
+                    }
+                    const previous = state.verificationObservations.get(number);
+                    const observation = previous === undefined || previous.headSha !== snapshot.pullRequest.headSha
+                        ? { headSha: snapshot.pullRequest.headSha, identity, consecutive: 1, emittedIdentities: new Set() }
+                        : previous;
+                    if (observation !== previous) {
+                        state.verificationObservations.set(number, observation);
+                    }
+                    else if (observation.identity !== identity) {
+                        observation.identity = identity;
+                        observation.consecutive = 1;
+                    }
+                    else {
+                        observation.consecutive += 1;
+                    }
+                    if (!options.once && observation.consecutive < 2) {
+                        logVerification(options.log, "verification_pending_stability", snapshot);
+                        continue;
+                    }
+                    if (observation.emittedIdentities.has(identity))
+                        continue;
+                    const verifyHead = options.headVerifier
+                        ?? options.verifyCurrentHead
+                        ?? ((candidate, verifySignal) => verifyCurrentHead(client, candidate, verifySignal));
+                    try {
+                        const current = await verifyHead({
+                            repository: repositoryName,
+                            pullRequestNumber: number,
+                            artifactHeadSha: snapshot.pullRequest.headSha,
+                        }, signal);
+                        if (!current) {
+                            state.verificationObservations.delete(number);
+                            summary.stale += 1;
+                            continue;
+                        }
+                        const result = await options.emitter.emitVerification(verification, snapshot, payload, signal);
+                        if (result === "emitted")
+                            summary.emitted += 1;
+                        else
+                            summary.replayed += 1;
+                        observation.emittedIdentities.add(identity);
+                        logVerification(options.log, result === "emitted" ? "verification_emitted" : "verification_replayed", snapshot);
+                    }
+                    catch (error) {
+                        if (isAuthFailure(error) || isTransient(error))
+                            throw error;
+                        if (isFatalRelayFailure(error)) {
+                            onFatal(error);
+                            throw error;
+                        }
+                        if (isAbort(error, signal))
+                            throw error;
+                        if (error instanceof GitHubRelayEmitterError && (error.code === "verification_drift" || error.code === "verification_invalid")) {
+                            options.disabledVerificationRepositories?.add(repositoryName);
+                            summary.errors.push(`${error.code}: ${errorText(error)}`);
+                        }
+                        else {
+                            summary.errors.push(`emission verification ${number}: ${errorText(error)}`);
+                        }
+                        logVerification(options.log, "verification_error", snapshot, error instanceof GitHubRelayEmitterError ? error.code : undefined);
+                    }
+                }
             }
         }
-        if (generic && !options.discover) {
+        if (!options.discover) {
             const returned = new Set(pullRequests.map((pullRequest) => pullRequest.number));
-            for (const number of state.ciObservations.keys()) {
-                if (!returned.has(number))
-                    state.ciObservations.delete(number);
+            if (generic) {
+                for (const number of state.ciObservations.keys()) {
+                    if (!returned.has(number))
+                        state.ciObservations.delete(number);
+                }
+            }
+            if (verificationEnabled) {
+                for (const number of state.verificationObservations.keys()) {
+                    if (!returned.has(number))
+                        state.verificationObservations.delete(number);
+                }
             }
         }
     }
@@ -407,6 +591,7 @@ export async function runGitHubCycle(options) {
         disabledTriggers: options.disabledTriggers ?? new Set(),
         disabledAggregates: options.disabledAggregates ?? new Set(),
         disabledCiRepositories: options.disabledCiRepositories ?? new Set(),
+        disabledVerificationRepositories: options.disabledVerificationRepositories ?? new Set(),
     };
     let fatal;
     const onFatal = (error) => {
@@ -441,6 +626,7 @@ export async function runGitHubConnector(options) {
     const disabledTriggers = options.disabledTriggers ?? new Set();
     const disabledAggregates = options.disabledAggregates ?? new Set();
     const disabledCiRepositories = options.disabledCiRepositories ?? new Set();
+    const disabledVerificationRepositories = options.disabledVerificationRepositories ?? new Set();
     const merge = (summary) => {
         total.pullRequests += summary.pullRequests;
         total.candidates += summary.candidates;
@@ -450,7 +636,7 @@ export async function runGitHubConnector(options) {
         total.errors.push(...summary.errors);
     };
     do {
-        const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers, disabledAggregates, disabledCiRepositories });
+        const cycle = await runGitHubCycle({ ...options, signal, sleep, state, disabledTriggers, disabledAggregates, disabledCiRepositories, disabledVerificationRepositories });
         merge(cycle);
         if (options.once || options.discover || signal.aborted)
             break;
