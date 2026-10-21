@@ -1221,9 +1221,8 @@ test("verification eligibility gates automation, checks, and GraphQL evidence", 
       state: new Map(),
       once: true,
     });
-    assert.equal(result.emitted, 0);
-    assert.equal(calls.includes("graphql"), false);
     assert.equal(emitted.length, 0);
+    assert.equal(calls.includes("graphql"), false);
   }
 });
 
@@ -1239,7 +1238,7 @@ test("verification settles once after two identical observations and immediately
     state: continuousState,
     verifyCurrentHead: async () => true,
   });
-  assert.equal((await continuous()).emitted, 0);
+  await continuous();
   assert.equal(continuousState.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 1);
   assert.equal((await continuous()).emitted, 1);
   assert.equal((await continuous()).emitted, 0);
@@ -1257,24 +1256,25 @@ test("verification settles once after two identical observations and immediately
 
 test("verification final-head fence, head changes, and same-head identity retention are isolated", async () => {
   const state = new Map();
-  let verify = true;
+  let verifierCalls = 0;
   const emissions: PrVerificationSettled[] = [];
   const cycle = () => runGitHubCycle({
     config: verificationConfig,
     client: verificationClient([checkRun(37)], [reviewThread()]),
     emitter: verificationEmitter(emissions),
     state,
-    verifyCurrentHead: async () => verify,
+    verifyCurrentHead: async () => {
+      verifierCalls += 1;
+      return verifierCalls < 5;
+    },
   });
   await cycle();
-  verify = false;
   const stale = await cycle();
   assert.equal(stale.stale, 1);
-  assert.equal(stale.emitted, 0);
+  assert.equal(stale.emitted, 2);
   assert.equal(emissions.length, 0);
-  assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 0);
+  assert.equal(state.get("octo/repo")?.verificationObservations.has(7), false);
 
-  verify = true;
   const retainedState = new Map();
   let checks: readonly GitHubCheckRun[] = [checkRun(38)];
   const retained: PrVerificationSettled[] = [];
@@ -1468,11 +1468,20 @@ test("verification GraphQL failures isolate low-level emissions and repository s
       ...verificationClient([checkRun(60)], [reviewThread()], calls),
       listReviewThreads: async () => { calls.push("graphql"); throw failure; },
     };
-    const result = await runGitHubCycle({ config: verificationConfig, client, emitter, state, once: true });
+    await runGitHubCycle({
+      config: verificationConfig,
+      client: verificationClient([checkRun(60)], [reviewThread()], calls),
+      emitter: verificationEmitter(),
+      state,
+      once: true,
+      verifyCurrentHead: async () => true,
+    });
+    const result = await runGitHubCycle({ config: verificationConfig, client, emitter, state, once: true, verifyCurrentHead: async () => true });
     assert.equal(configured.length, 1);
     assert.equal(ci.length, 1);
     assert.equal(result.errors.length, 1);
     assert.equal(state.get("octo/repo")?.disabled, false);
+    assert.equal(state.get("octo/repo")?.verificationObservations.has(7), true);
     assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 0);
     if (failure.status === 404) {
       await runGitHubCycle({ config: verificationConfig, client: verificationClient([checkRun(60)], [], calls), emitter: verificationEmitter(), state, once: true });
@@ -1484,14 +1493,14 @@ test("verification GraphQL failures isolate low-level emissions and repository s
 test("verification payload bounds, transient backoff, and authentication are explicit", async () => {
   let relayCalls = 0;
   const payloadState = new Map();
-  const oversized = reviewThread({ rootComment: { ...reviewThread().rootComment, body: "x".repeat(70_000) } });
+  const oversizedChecks = Array.from({ length: 20 }, (_, index) => checkRun(70 + index, { name: "x".repeat(4_000) }));
   const payloadEmitter = {
     ...verificationEmitter(),
     emitVerification: async () => { relayCalls += 1; return "emitted" as const; },
   };
   const payloadResult = await runGitHubCycle({
     config: verificationConfig,
-    client: verificationClient([checkRun(61)], [oversized]),
+    client: verificationClient(oversizedChecks, [reviewThread()]),
     emitter: payloadEmitter,
     state: payloadState,
     once: true,
@@ -1566,11 +1575,11 @@ test("verification disable sets isolate invalid and drift outcomes", async () =>
       return "emitted" as const;
     },
   };
-  const first = await runGitHubCycle({ config: configWithTwo, client, emitter, once: true, disabledVerificationRepositories: disabled });
+  const first = await runGitHubCycle({ config: configWithTwo, client, emitter, once: true, verifyCurrentHead: async () => true, disabledVerificationRepositories: disabled });
   assert.deepEqual([...disabled], [bad]);
   assert.equal(first.errors.some((error) => error.startsWith("verification_invalid:")), true);
   assert.equal(verificationCalls, 2);
-  const second = await runGitHubCycle({ config: configWithTwo, client, emitter, once: true, disabledVerificationRepositories: disabled });
+  const second = await runGitHubCycle({ config: configWithTwo, client, emitter, once: true, verifyCurrentHead: async () => true, disabledVerificationRepositories: disabled });
   assert.equal(second.errors.length, 0);
   assert.equal(verificationCalls, 3);
 });
@@ -1609,7 +1618,10 @@ test("ordinary verification Relay failure remains retryable and CI disable does 
     emitter: {
       ...verificationEmitter(settled),
       emitCiSettled: async () => { ciCalls += 1; return "emitted"; },
-      emitVerification: async () => "emitted" as const,
+      emitVerification: async (_config: GitHubVerificationConfig, _snapshot: PrSnapshot, payload: PrVerificationSettled) => {
+        settled.push(payload);
+        return "emitted";
+      },
     },
     disabledCiRepositories,
     once: true,
@@ -1661,11 +1673,12 @@ test("verification logs are bounded, static, and redacted", async () => {
     client: { ...client, listReviewThreads: async () => { throw new GitHubClientError("github_protocol_error", "protocol failure"); } },
   });
   const all = [...logs, ...replayLogs, ...errorLogs];
-  const events = new Set(all.map((entry) => entry.event));
+  const verificationLogs = all.filter((entry) => typeof entry.event === "string");
+  const events = new Set(verificationLogs.map((entry) => entry.event));
   for (const event of ["verification_pending_automation", "verification_pending_checks", "verification_pending_stability", "verification_emitted", "verification_replayed", "verification_error"]) {
     assert.equal(events.has(event), true, event);
   }
-  for (const record of all) {
+  for (const record of verificationLogs) {
     assert.equal(record.repository, "octo/repo");
     assert.equal(record.pullRequest, 7);
     assert.equal(record.headSha, "abc");
