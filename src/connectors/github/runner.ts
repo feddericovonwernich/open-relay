@@ -228,9 +228,18 @@ function logVerification(log: Log | undefined, event: string, snapshot: PrSnapsh
 
 function clearVerificationObservation(state: RepositoryState, pullRequestNumber: number, headSha: string): void {
   const previous = state.verificationObservations.get(pullRequestNumber);
-  if (previous === undefined) return;
-  if (previous.headSha !== headSha) state.verificationObservations.delete(pullRequestNumber);
-  else previous.consecutive = 0;
+  if (previous === undefined) {
+    state.verificationObservations.set(pullRequestNumber, {
+      headSha,
+      identity: "",
+      consecutive: 0,
+      emittedIdentities: new Set<string>(),
+    });
+  } else if (previous.headSha !== headSha) {
+    state.verificationObservations.delete(pullRequestNumber);
+  } else {
+    previous.consecutive = 0;
+  }
 }
 
 async function runRepository(
@@ -506,7 +515,15 @@ async function runRepository(
             logVerification(options.log, "verification_error", snapshot, code);
             continue;
           }
-          const identity = verificationKey(payload);
+          let identity: string;
+          try {
+            identity = verificationKey(payload);
+          } catch (error) {
+            const code = error instanceof GitHubVerificationError ? error.code : "verification_error";
+            summary.errors.push(`${code}: ${errorText(error)}`);
+            logVerification(options.log, "verification_error", snapshot, code);
+            continue;
+          }
           const previous = state.verificationObservations.get(number);
           const observation: GitHubVerificationObservationState =
             previous === undefined || previous.headSha !== snapshot.pullRequest.headSha
@@ -536,7 +553,7 @@ async function runRepository(
               artifactHeadSha: snapshot.pullRequest.headSha,
             }, signal);
             if (!current) {
-              observation.consecutive = 0;
+              state.verificationObservations.delete(number);
               summary.stale += 1;
               continue;
             }
