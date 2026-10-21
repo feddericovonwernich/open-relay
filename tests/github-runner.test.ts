@@ -1555,6 +1555,35 @@ test("verification payload bounds, transient backoff, and authentication are exp
   }), /bad GraphQL token/);
 });
 
+test("verification payload failure breaks same-head continuity before recovery", async () => {
+  const state = new Map();
+  const emitted: PrVerificationSettled[] = [];
+  let checks: readonly GitHubCheckRun[] = [checkRun(68)];
+  const oversizedChecks = Array.from({ length: 20 }, (_, index) => checkRun(80 + index, { name: "y".repeat(4_000) }));
+  const client = {
+    ...verificationClient(),
+    listCurrentCheckRuns: async () => [...checks],
+  };
+  const emitter = verificationEmitter(emitted);
+  const cycle = () => runGitHubCycle({
+    config: verificationConfig,
+    client,
+    emitter,
+    state,
+    verifyCurrentHead: async () => true,
+  });
+
+  await cycle();
+  assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 1);
+  checks = oversizedChecks;
+  const failed = await cycle();
+  assert.equal(failed.errors.some((error) => error.startsWith("verification_payload_too_large:")), true);
+  checks = [checkRun(68)];
+  await cycle();
+  assert.equal(emitted.length, 0);
+  assert.equal(state.get("octo/repo")?.verificationObservations.get(7)?.consecutive, 1);
+});
+
 test("verification disable sets isolate invalid and drift outcomes", async () => {
   const disabled = new Set<string>();
   const bad = "octo/bad";
