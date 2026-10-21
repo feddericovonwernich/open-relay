@@ -55,17 +55,17 @@ export class GitHubVerificationError extends Error {
     }
 }
 export function normalizeVerification(snapshot, candidates, checks, threads, verification) {
-    const providerByLogin = {};
+    const providerByLogin = new Map();
     for (const provider of PROVIDERS) {
         for (const login of verification.reviewers[provider] ?? []) {
             const normalizedLogin = login.toLowerCase();
-            if (providerByLogin[normalizedLogin] === undefined)
-                providerByLogin[normalizedLogin] = provider;
+            if (!providerByLogin.has(normalizedLogin))
+                providerByLogin.set(normalizedLogin, provider);
         }
     }
-    const matching = threads.filter((item) => !item.isResolved && providerByLogin[item.rootComment.authorLogin.toLowerCase()] !== undefined);
+    const matching = threads.filter((item) => !item.isResolved && providerByLogin.has(item.rootComment.authorLogin.toLowerCase()));
     const digestRecords = matching.map((item) => ({
-        provider: providerByLogin[item.rootComment.authorLogin.toLowerCase()],
+        provider: providerByLogin.get(item.rootComment.authorLogin.toLowerCase()),
         threadId: item.id,
         isResolved: item.isResolved,
         isOutdated: item.isOutdated,
@@ -82,7 +82,7 @@ export function normalizeVerification(snapshot, candidates, checks, threads, ver
     const canonicalCandidates = matching.map((item) => {
         const wireBody = bodyForWire(item.rootComment.body);
         return {
-            provider: providerByLogin[item.rootComment.authorLogin.toLowerCase()],
+            provider: providerByLogin.get(item.rootComment.authorLogin.toLowerCase()),
             threadId: item.id,
             rootCommentId: item.rootComment.id,
             authorLogin: item.rootComment.authorLogin,
