@@ -24,10 +24,13 @@ const githubPaths = [
   ".relay/events/pr-automation-completed.v1.json",
   ".relay/events/pr-automation-settled.v1.json",
   ".relay/events/pr-ci-settled.v1.json",
+  ".relay/events/pr-verification-settled.v1.json",
   ".relay/schemas/pr-automation-completed.json",
   ".relay/schemas/pr-automation-settled.json",
   ".relay/schemas/pr-automation-result.json",
   ".relay/schemas/pr-ci-settled.json",
+  ".relay/schemas/pr-verification-settled.json",
+  ".relay/schemas/notification-delivered.json",
   ".relay/handlers/pr-automation-completed.md",
   ".relay/handlers/pr-automation-settled.md",
   ".relay/handlers/pr-ci-settled.md",
@@ -55,6 +58,22 @@ async function inTemporaryProject(run: (directory: string) => Promise<void>): Pr
 function capture(): { output: string[]; stream: { write(value: string): void } } {
   const output: string[] = [];
   return { output, stream: { write: (value) => output.push(value) } };
+}
+
+function mutatePath(value: unknown, path: readonly (string | number)[], replacement: unknown): unknown {
+  const copy = structuredClone(value) as Record<string | number, any>;
+  let target = copy;
+  for (const key of path.slice(0, -1)) target = target[key] as Record<string | number, any>;
+  target[path[path.length - 1]] = replacement;
+  return copy;
+}
+
+function removePath(value: unknown, path: readonly (string | number)[]): unknown {
+  const copy = structuredClone(value) as Record<string | number, any>;
+  let target = copy;
+  for (const key of path.slice(0, -1)) target = target[key] as Record<string | number, any>;
+  delete target[path[path.length - 1]];
+  return copy;
 }
 
 test("relay --help works without an initialized project", async () => {
@@ -105,10 +124,186 @@ test("relay init --github creates discovery-ready GitHub configuration", async (
       id: "pr-automation-settled-v1",
       emit: { type: "pr.automation.settled", version: 1 },
     });
+    assert.equal(config.verification, undefined);
     const registry = loadRegistry(directory, ".relay/events");
     assert.equal(registry.resolve("pr.automation.completed", 1).definition.type, "pr.automation.completed");
     assert.equal(registry.resolve("pr.automation.settled", 1).definition.type, "pr.automation.settled");
     assert.equal(registry.resolve("pr.ci.settled", 1).definition.type, "pr.ci.settled");
+    const verification = registry.resolve("pr.verification.settled", 1);
+    assert.deepEqual(verification.definition.handler, { kind: "notification" });
+    assert.equal(verification.definition.requires.maxPayloadBytes, 65_536);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(directory, ".relay/schemas/notification-delivered.json"), "utf8")),
+      {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        properties: { delivered: { const: true } },
+        required: ["delivered"],
+        additionalProperties: false,
+      },
+    );
+    await assert.rejects(stat(join(directory, ".relay/handlers/pr-verification-settled.md")), { code: "ENOENT" });
+
+    const validPayload = {
+      schemaVersion: 1,
+      provider: "github",
+      repository: { id: 7, fullName: "owner/repository" },
+      pullRequest: {
+        number: 12,
+        url: "https://github.com/owner/repository/pull/12",
+        headSha: "head-1",
+        baseRef: "main",
+      },
+      verdict: "action_required",
+      automation: {
+        artifacts: [{
+          triggerId: "cursor-bugbot-completed-v1",
+          provider: "cursor-bugbot",
+          kind: "check_run",
+          id: "2",
+          name: "Cursor Bugbot",
+          completion: "completed",
+          conclusion: null,
+          completedAt: "2026-09-08T01:00:00Z",
+          detailsUrl: null,
+        }],
+      },
+      ci: {
+        outcome: "success",
+        checks: [{
+          id: "2",
+          name: "build",
+          conclusion: null,
+          completedAt: "2026-09-08T01:00:00Z",
+          detailsUrl: null,
+        }],
+        failingCheckNames: [],
+      },
+      reviews: {
+        unresolvedCount: 1,
+        includedCount: 1,
+        totalReplyCount: 2,
+        truncated: false,
+        evidenceDigest: "0".repeat(64),
+        findings: [{
+          provider: "cursor-bugbot",
+          threadId: "thread-1",
+          rootCommentId: "comment-1",
+          authorLogin: "bugbot[bot]",
+          url: "https://github.com/owner/repository/pull/12#discussion_r1",
+          path: "src/app.ts",
+          startLine: null,
+          line: 10,
+          isOutdated: false,
+          body: "Please fix this.",
+          bodyTruncated: false,
+          replyCount: 2,
+        }],
+      },
+      actions: [
+        {
+          code: "investigate_ci_failures",
+          checkNames: ["build"],
+          message: "Investigate the failed CI checks. Fix failures caused by the change when possible. Otherwise report the cause and why it could not be fixed automatically.",
+        },
+        {
+          code: "resolve_review_findings",
+          providers: ["cursor-bugbot"],
+          findingCount: 1,
+          message: "Review the unresolved Bugbot/Copilot comments. If a finding is valid, implement a fix. In every case, reply with the result and resolve the thread when addressed.",
+        },
+        {
+          code: "verify_review_result",
+          provider: "cursor-bugbot",
+          checkName: "Cursor Bugbot",
+          message: "Verify the completed neutral Bugbot result. Confirm whether the run contains findings, cancellation, or an internal error before treating the review as successful.",
+        },
+      ],
+    };
+    assert.equal(verification.validateInput(validPayload), true);
+    assert.equal(verification.validateOutput({ delivered: true }), true);
+
+    const requiredPaths: ReadonlyArray<readonly (string | number)[]> = [
+      ["schemaVersion"], ["provider"], ["repository"], ["pullRequest"], ["verdict"], ["automation"], ["ci"], ["reviews"], ["actions"],
+      ["repository", "id"], ["repository", "fullName"],
+      ["pullRequest", "number"], ["pullRequest", "url"], ["pullRequest", "headSha"], ["pullRequest", "baseRef"],
+      ["automation", "artifacts", 0, "triggerId"], ["automation", "artifacts", 0, "provider"],
+      ["automation", "artifacts", 0, "kind"], ["automation", "artifacts", 0, "id"],
+      ["automation", "artifacts", 0, "name"], ["automation", "artifacts", 0, "completion"],
+      ["automation", "artifacts", 0, "conclusion"], ["automation", "artifacts", 0, "completedAt"],
+      ["automation", "artifacts", 0, "detailsUrl"],
+      ["ci", "outcome"], ["ci", "checks", 0, "id"], ["ci", "checks", 0, "name"],
+      ["ci", "checks", 0, "conclusion"], ["ci", "checks", 0, "completedAt"], ["ci", "checks", 0, "detailsUrl"],
+      ["ci", "failingCheckNames"],
+      ["reviews", "unresolvedCount"], ["reviews", "includedCount"], ["reviews", "totalReplyCount"],
+      ["reviews", "truncated"], ["reviews", "evidenceDigest"], ["reviews", "findings"],
+      ["reviews", "findings", 0, "provider"], ["reviews", "findings", 0, "threadId"],
+      ["reviews", "findings", 0, "rootCommentId"], ["reviews", "findings", 0, "authorLogin"],
+      ["reviews", "findings", 0, "url"], ["reviews", "findings", 0, "path"],
+      ["reviews", "findings", 0, "startLine"], ["reviews", "findings", 0, "line"],
+      ["reviews", "findings", 0, "isOutdated"], ["reviews", "findings", 0, "body"],
+      ["reviews", "findings", 0, "bodyTruncated"], ["reviews", "findings", 0, "replyCount"],
+      ["actions", 0, "code"], ["actions", 0, "checkNames"], ["actions", 0, "message"],
+      ["actions", 1, "code"], ["actions", 1, "providers"], ["actions", 1, "findingCount"], ["actions", 1, "message"],
+      ["actions", 2, "code"], ["actions", 2, "provider"], ["actions", 2, "checkName"], ["actions", 2, "message"],
+    ];
+    for (const path of requiredPaths) {
+      assert.equal(verification.validateInput(removePath(validPayload, path)), false, `required ${path.join(".")}`);
+    }
+
+    const closedObjectCases: ReadonlyArray<readonly (string | number)[]> = [
+      ["repository"], ["pullRequest"], ["automation"], ["automation", "artifacts", 0],
+      ["ci"], ["ci", "checks", 0], ["reviews"], ["reviews", "findings", 0],
+      ["actions", 0], ["actions", 1], ["actions", 2],
+    ];
+    for (const path of closedObjectCases) {
+      assert.equal(
+        verification.validateInput(mutatePath(validPayload, path.concat("unexpected"), true)),
+        false,
+        `closed ${path.join(".")}`,
+      );
+    }
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["unexpected"], true)), false, "closed root");
+
+    const enumCases: ReadonlyArray<readonly [(string | number)[], unknown]> = [
+      [["provider"], "gitlab"],
+      [["verdict"], "blocked"],
+      [["automation", "artifacts", 0, "kind"], "workflow"],
+      [["automation", "artifacts", 0, "completion"], "queued"],
+      [["reviews", "findings", 0, "provider"], "human"],
+      [["actions", 0, "code"], "other"],
+      [["actions", 0, "message"], "other"],
+      [["actions", 1, "providers", 0], "other"],
+      [["actions", 1, "code"], "other"],
+      [["actions", 2, "provider"], "copilot-review"],
+      [["actions", 2, "code"], "other"],
+      [["actions", 2, "message"], "other"],
+    ];
+    for (const [path, replacement] of enumCases) {
+      assert.equal(verification.validateInput(mutatePath(validPayload, path, replacement)), false, `enum ${path.join(".")}`);
+    }
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["automation", "artifacts", 0, "detailsUrl"], 42)), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["ci", "checks", 0, "conclusion"], 42)), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["reviews", "findings", 0, "startLine"], "10")), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["reviews", "findings", 0, "line"], "10")), false);
+
+    for (const [path, replacement] of [
+      [["reviews", "unresolvedCount"], -1],
+      [["reviews", "includedCount"], -1],
+      [["reviews", "totalReplyCount"], -1],
+      [["reviews", "findings", 0, "replyCount"], -1],
+      [["actions", 1, "findingCount"], -1],
+    ] as const) {
+      assert.equal(verification.validateInput(mutatePath(validPayload, path, replacement)), false, `minimum ${path.join(".")}`);
+    }
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["reviews", "findings", 0, "body"], "x".repeat(2_001))), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["reviews", "evidenceDigest"], "0".repeat(63))), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["reviews", "evidenceDigest"], "G".repeat(64))), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["automation", "artifacts"], [])), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["ci", "checks"], [])), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["reviews", "findings"], Array.from({ length: 21 }, () => validPayload.reviews.findings[0]))), false);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["reviews", "findings"], [])), true);
+    assert.equal(verification.validateInput(mutatePath(validPayload, ["actions"], [])), true);
     await assertMatchesExample(directory, "github-pr-automation", [...basicPaths, ...githubPaths]);
   });
 });
