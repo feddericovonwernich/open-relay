@@ -148,10 +148,11 @@ async function githubHarness(): Promise<{ github: FakeGitHubServer; heads: { cur
 test("real fake GitHub and real Relay reconcile all providers and replay after restart", async () => {
   const relay = await relayHarness();
   const { github, client } = await githubHarness();
+  const now = () => Date.parse("2026-09-09T00:00:00Z");
   try {
     const cfg = config(github.url);
     const emitter = new GitHubRelayEmitter({ baseUrl: relay.base, adminToken: relay.server.adminToken });
-    const first = await runGitHubConnector({ config: cfg, client, emitter, once: true });
+    const first = await runGitHubConnector({ config: cfg, client, emitter, once: true, now });
     assert.equal(first.emitted, 3);
     assert.equal(first.replayed, 0);
     assert.equal(relay.store.countEvents(), 3);
@@ -170,12 +171,12 @@ test("real fake GitHub and real Relay reconcile all providers and replay after r
       assert.equal(JSON.stringify(payload).includes("body"), false);
       assert.equal(JSON.stringify(payload).includes(secret), false);
     }
-    const cached = await runGitHubConnector({ config: cfg, client, emitter, once: true });
+    const cached = await runGitHubConnector({ config: cfg, client, emitter, once: true, now });
     assert.equal(cached.emitted, 0);
     assert.equal(cached.replayed, 3);
     assert.ok(github.requests.some((request) => request.url === `/repos/${repo}/pulls?state=open&per_page=100` && request.headers["if-none-match"] === "open-1"));
     assert.ok(github.count(`/repos/${repo}/commits/sha-1/check-runs?status=completed&filter=all&per_page=100`) >= 2);
-    const replay = await runGitHubConnector({ config: cfg, client: new GitHubClient({ baseUrl: github.url, apiVersion: "2026-03-10", token: secret }), emitter: new GitHubRelayEmitter({ baseUrl: relay.base, adminToken: relay.server.adminToken }), once: true });
+    const replay = await runGitHubConnector({ config: cfg, client: new GitHubClient({ baseUrl: github.url, apiVersion: "2026-03-10", token: secret }), emitter: new GitHubRelayEmitter({ baseUrl: relay.base, adminToken: relay.server.adminToken }), once: true, now });
     assert.equal(replay.emitted, 0);
     assert.equal(replay.replayed, 3);
     assert.equal(relay.store.countEvents(), 3);

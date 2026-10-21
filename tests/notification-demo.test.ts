@@ -286,7 +286,7 @@ test("interrupted setup stops Relay and removes unpublished resources", { timeou
   const statePath = join(tmpdir(), `open-relay-notification-demo-interrupt-${process.pid}.json`);
   await writeFile(fakeCli, `
 import { once } from "node:events";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 const action = process.argv[2];
 const root = process.argv[process.argv.indexOf("--project-root") + 1];
@@ -294,7 +294,10 @@ if (action === "init") {
   await mkdir(join(root, ".relay", "events"), { recursive: true });
   await mkdir(join(root, ".relay", "schemas"), { recursive: true });
 } else if (action === "start") {
-  await writeFile(process.env.OPEN_RELAY_NOTIFICATION_DEMO_INTERRUPT_MARKER, JSON.stringify({ pid: process.pid, root }));
+  const marker = process.env.OPEN_RELAY_NOTIFICATION_DEMO_INTERRUPT_MARKER;
+  const temporaryMarker = join(root, "relay-marker.json");
+  await writeFile(temporaryMarker, JSON.stringify({ pid: process.pid, root }));
+  await rename(temporaryMarker, marker);
   await once(process, "SIGTERM");
 }
 `);
