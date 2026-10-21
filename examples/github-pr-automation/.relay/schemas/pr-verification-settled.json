@@ -1,0 +1,409 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "provider": {
+      "const": "github"
+    },
+    "repository": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "fullName"
+      ],
+      "additionalProperties": false
+    },
+    "pullRequest": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headSha": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "number",
+        "url",
+        "headSha",
+        "baseRef"
+      ],
+      "additionalProperties": false
+    },
+    "verdict": {
+      "enum": [
+        "success",
+        "action_required"
+      ]
+    },
+    "automation": {
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "triggerId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "check_run",
+                  "pull_request_review"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "completion": {
+                "enum": [
+                  "completed",
+                  "submitted"
+                ]
+              },
+              "conclusion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "completedAt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detailsUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "triggerId",
+              "provider",
+              "kind",
+              "id",
+              "name",
+              "completion",
+              "conclusion",
+              "completedAt",
+              "detailsUrl"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "artifacts"
+      ],
+      "additionalProperties": false
+    },
+    "ci": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "success",
+            "failure"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "conclusion": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "completedAt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detailsUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "conclusion",
+              "completedAt",
+              "detailsUrl"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "failingCheckNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "outcome",
+        "checks",
+        "failingCheckNames"
+      ],
+      "additionalProperties": false
+    },
+    "reviews": {
+      "type": "object",
+      "properties": {
+        "unresolvedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "includedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalReplyCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "evidenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "findings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "enum": [
+                  "cursor-bugbot",
+                  "copilot-review"
+                ]
+              },
+              "threadId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rootCommentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "authorLogin": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "startLine": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "isOutdated": {
+                "type": "boolean"
+              },
+              "body": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "bodyTruncated": {
+                "type": "boolean"
+              },
+              "replyCount": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "provider",
+              "threadId",
+              "rootCommentId",
+              "authorLogin",
+              "url",
+              "path",
+              "startLine",
+              "line",
+              "isOutdated",
+              "body",
+              "bodyTruncated",
+              "replyCount"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "unresolvedCount",
+        "includedCount",
+        "totalReplyCount",
+        "truncated",
+        "evidenceDigest",
+        "findings"
+      ],
+      "additionalProperties": false
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "investigate_ci_failures"
+              },
+              "checkNames": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "message": {
+                "const": "Investigate the failed CI checks. Fix failures caused by the change when possible. Otherwise report the cause and why it could not be fixed automatically."
+              }
+            },
+            "required": [
+              "code",
+              "checkNames",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "resolve_review_findings"
+              },
+              "providers": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "cursor-bugbot",
+                    "copilot-review"
+                  ]
+                }
+              },
+              "findingCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "message": {
+                "const": "Review the unresolved Bugbot/Copilot comments. If a finding is valid, implement a fix. In every case, reply with the result and resolve the thread when addressed."
+              }
+            },
+            "required": [
+              "code",
+              "providers",
+              "findingCount",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "const": "verify_review_result"
+              },
+              "provider": {
+                "const": "cursor-bugbot"
+              },
+              "checkName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "const": "Verify the completed neutral Bugbot result. Confirm whether the run contains findings, cancellation, or an internal error before treating the review as successful."
+              }
+            },
+            "required": [
+              "code",
+              "provider",
+              "checkName",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "provider",
+    "repository",
+    "pullRequest",
+    "verdict",
+    "automation",
+    "ci",
+    "reviews",
+    "actions"
+  ],
+  "additionalProperties": false
+}
