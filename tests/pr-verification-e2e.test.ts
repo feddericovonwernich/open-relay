@@ -329,9 +329,9 @@ test("real verification evidence parks and wakes one correlation-filtered notifi
 
     const secondObservation = await runGitHubCycle({ ...runnerOptions, once: false });
     allSummaries.push(secondObservation);
-    assert.deepEqual(secondObservation.errors, [], `second terminal observation errors: ${JSON.stringify(secondObservation.errors)}`);
     assert.ok(capturedVerification !== undefined, "verification payload was not captured before real emission");
     assert.deepEqual(capturedVerificationDiagnostics, [], `generated verification schema diagnostics: ${JSON.stringify(capturedVerificationDiagnostics)}`);
+    assert.deepEqual(secondObservation.errors, [], `second terminal observation errors: ${JSON.stringify(secondObservation.errors)}`);
     const firstEvents = relay.store.snapshotAtHighWater().snapshot.events;
     const firstVerificationEvents = firstEvents.filter((event) => event.type === "pr.verification.settled");
     assert.equal(firstVerificationEvents.length, 1, `verification event boundary: summary=${JSON.stringify(secondObservation)} logs=${JSON.stringify(logs)} eventTypes=${JSON.stringify(firstEvents.map((event) => event.type))}`);
