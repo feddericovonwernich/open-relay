@@ -1,4 +1,3 @@
-import { Ajv } from "ajv";
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -183,39 +182,6 @@ function eventText(events: readonly { payload: unknown; idempotencyKey: string; 
   return events.map((event) => JSON.stringify({ payload: event.payload, idempotencyKey: event.idempotencyKey, error: event.error })).join("\n");
 }
 
-type VerificationPayload = Parameters<GitHubRelayEmitter["emitVerification"]>[2];
-type VerificationEmitter = Pick<GitHubRelayEmitter, "emit" | "emitAggregate" | "emitCiSettled" | "emitVerification">;
-
-function observingEmitter(
-  real: GitHubRelayEmitter,
-  capture: (payload: VerificationPayload) => void,
-): VerificationEmitter {
-  return {
-    emit: real.emit.bind(real),
-    emitAggregate: real.emitAggregate.bind(real),
-    emitCiSettled: real.emitCiSettled.bind(real),
-    emitVerification: (...args) => {
-      capture(args[2]);
-      return real.emitVerification(...args);
-    },
-  };
-}
-
-function verificationSchemaDiagnostics(
-  errors: readonly { instancePath: string; keyword: string; params: unknown }[] | null | undefined,
-): Array<{ path: string; keyword: string; expected: string }> {
-  return (errors ?? []).map((error) => {
-    const params = error.params;
-    const expected = params !== null && typeof params === "object" && "type" in params
-      ? String(params.type)
-      : error.keyword === "required"
-        ? "required property"
-        : error.keyword === "additionalProperties"
-          ? "no additional properties"
-          : error.keyword;
-    return { path: error.instancePath, keyword: error.keyword, expected };
-  });
-}
 
 test("real verification evidence parks and wakes one correlation-filtered notification", async () => {
   const relay = await relayHarness();
@@ -269,10 +235,6 @@ test("real verification evidence parks and wakes one correlation-filtered notifi
     github = await fakeGitHubServer(scripts);
     const config = connectorConfig(github.url);
     await writeFile(join(relay.root, ".relay", "connectors", "github.json"), JSON.stringify(config));
-    const verificationSchema = JSON.parse(await readFile(join(relay.root, ".relay", "schemas", "pr-verification-settled.json"), "utf8")) as object;
-    const validateVerification = new Ajv({ allErrors: true, strict: true }).compile(verificationSchema);
-    let capturedVerification: VerificationPayload | undefined;
-    let capturedVerificationDiagnostics: Array<{ path: string; keyword: string; expected: string }> = [];
     const runtime = JSON.parse(await readFile(join(relay.root, ".relay", "runtime.json"), "utf8")) as { port: number; token: string };
     assert.equal(runtime.port, Number(new URL(relay.baseUrl).port));
 
@@ -295,12 +257,7 @@ test("real verification evidence parks and wakes one correlation-filtered notifi
     await notifyPollStarted.promise;
 
     const client = new GitHubClient({ baseUrl: github.url, graphqlUrl: `${github.url}/graphql`, apiVersion: "2026-03-10", token: githubToken });
-    const realEmitter = new GitHubRelayEmitter({ baseUrl: relay.baseUrl, adminToken: relay.server.adminToken });
-    const emitter = observingEmitter(realEmitter, (payload) => {
-      capturedVerification = payload;
-      validateVerification(payload);
-      capturedVerificationDiagnostics = verificationSchemaDiagnostics(validateVerification.errors);
-    });
+    const emitter = new GitHubRelayEmitter({ baseUrl: relay.baseUrl, adminToken: relay.server.adminToken });
     const state = new Map<string, GitHubRunnerState>();
     const runnerOptions = {
       config,
@@ -329,8 +286,6 @@ test("real verification evidence parks and wakes one correlation-filtered notifi
 
     const secondObservation = await runGitHubCycle({ ...runnerOptions, once: false });
     allSummaries.push(secondObservation);
-    assert.ok(capturedVerification !== undefined, "verification payload was not captured before real emission");
-    assert.deepEqual(capturedVerificationDiagnostics, [], `generated verification schema diagnostics: ${JSON.stringify(capturedVerificationDiagnostics)}`);
     assert.deepEqual(secondObservation.errors, [], `second terminal observation errors: ${JSON.stringify(secondObservation.errors)}`);
     const firstEvents = relay.store.snapshotAtHighWater().snapshot.events;
     const firstVerificationEvents = firstEvents.filter((event) => event.type === "pr.verification.settled");

@@ -148,8 +148,10 @@ export function normalizeVerification(
   }
   const truncated = findings.length < matching.length;
 
-  const automation = normalizeSettled(snapshot, candidates);
-  const ci = normalizeCiSettled(snapshot, checks);
+  const automationPayload = normalizeSettled(snapshot, candidates);
+  const automation = { artifacts: automationPayload.artifacts };
+  const ciPayload = normalizeCiSettled(snapshot, checks);
+  const ci = { outcome: ciPayload.outcome, checks: ciPayload.checks };
   const failingNames = [...new Set(ci.checks.filter((check) => !PASSING_CONCLUSIONS.has(check.conclusion ?? "")).map((check) => check.name))].sort();
   const actions: VerificationAction[] = [];
   if (failingNames.length > 0) {

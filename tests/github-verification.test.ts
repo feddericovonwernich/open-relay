@@ -219,6 +219,20 @@ test("verification heuristic table emits exact actions, verdict, and CI failure 
   }
 });
 
+test("verification nested contracts omit duplicated event envelope fields", () => {
+  const payload = normalize([candidate()], [check({ conclusion: "failure" })], [thread()]);
+  assert.deepEqual(Object.keys(payload.automation), ["artifacts"]);
+  assert.deepEqual(Object.keys(payload.ci).sort(), ["checks", "failingCheckNames", "outcome"]);
+  assert.equal("schemaVersion" in payload.automation, false);
+  assert.equal("provider" in payload.automation, false);
+  assert.equal("repository" in payload.automation, false);
+  assert.equal("pullRequest" in payload.automation, false);
+  assert.equal("schemaVersion" in payload.ci, false);
+  assert.equal("provider" in payload.ci, false);
+  assert.equal("repository" in payload.ci, false);
+  assert.equal("pullRequest" in payload.ci, false);
+});
+
 test("only exact success, neutral, and skipped conclusions pass terminal checks", () => {
   for (const conclusion of ["success", "neutral", "skipped"] as const) {
     assert.equal(normalize([candidate()], [check({ conclusion })]).ci.outcome, "success", conclusion);
