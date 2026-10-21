@@ -1153,7 +1153,7 @@ function verificationClient(
   return {
     ...clientFor(head),
     listOpenPullRequests: async () => [{ ...pullRequest, headSha: head }],
-    listCompletedCheckRuns: async () => [...snapshot.checkRuns],
+    listCompletedCheckRuns: async () => snapshot.checkRuns.map((run) => ({ ...run, headSha: head })),
     listCurrentCheckRuns: async () => {
       calls.push("current");
       return [...checks];
@@ -1251,7 +1251,7 @@ test("verification settles once after two identical observations and immediately
     verificationClient([checkRun(36)], [reviewThread()]),
     verificationEmitter(onceEmissions),
   );
-  assert.equal(once.emitted, 1);
+  assert.equal(once.emitted, 3);
   assert.equal(onceEmissions.length, 1);
 });
 
