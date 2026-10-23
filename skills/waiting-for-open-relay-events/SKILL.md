@@ -19,6 +19,7 @@ Read and follow `using-open-relay` first. It owns the universal safety contract.
 Use the handler kind and required definition/version to choose. Add the exact correlation filter when the workflow is targeted. Do not use repeated `relay get` calls as a waiting loop.
 
 `relay notify` acknowledges one notification automatically; `relay agent poll` returns a lease the agent must settle. Both wait silently without model turns; never busy-poll or emit two-second status turns. Every plan must explicitly name this distinction, the exact definition/version and correlation filter, and the no-second-poll rule.
+Any explanation or plan MUST include literal `relay notify` (automatic acknowledgement) and `relay agent poll` (lease settlement), then state `start`, one terminal reply, validate completion against `delivery.outputSchema`, silent waiting, never repeated `relay get` waits, and process stop.
 
 ## Notification Lifecycle
 
