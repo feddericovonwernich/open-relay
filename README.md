@@ -111,11 +111,16 @@ Canonical agent skills live under [`skills/`](skills/). Each skill is triggered 
 Inspect each target path before copying the corresponding directory into `~/.agents/skills/<name>/`:
 
 ```bash
-cp -R skills/using-open-relay ~/.agents/skills/using-open-relay
-cp -R skills/setting-up-open-relay ~/.agents/skills/setting-up-open-relay
-cp -R skills/waiting-for-open-relay-events ~/.agents/skills/waiting-for-open-relay-events
-cp -R skills/automating-github-prs-with-open-relay ~/.agents/skills/automating-github-prs-with-open-relay
-cp -R skills/recovering-open-relay ~/.agents/skills/recovering-open-relay
+mkdir -p ~/.agents/skills/using-open-relay
+cp -R skills/using-open-relay/. ~/.agents/skills/using-open-relay/
+mkdir -p ~/.agents/skills/setting-up-open-relay
+cp -R skills/setting-up-open-relay/. ~/.agents/skills/setting-up-open-relay/
+mkdir -p ~/.agents/skills/waiting-for-open-relay-events
+cp -R skills/waiting-for-open-relay-events/. ~/.agents/skills/waiting-for-open-relay-events/
+mkdir -p ~/.agents/skills/automating-github-prs-with-open-relay
+cp -R skills/automating-github-prs-with-open-relay/. ~/.agents/skills/automating-github-prs-with-open-relay/
+mkdir -p ~/.agents/skills/recovering-open-relay
+cp -R skills/recovering-open-relay/. ~/.agents/skills/recovering-open-relay/
 ```
 
 Do not overwrite unrelated files in those target directories.
