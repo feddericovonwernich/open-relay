@@ -98,6 +98,33 @@ Agents should read [`AGENTS.md`](AGENTS.md), then follow the deterministic [`age
 verify Node -> install from GitHub -> initialize target repository
 -> inspect generated files -> start -> emit -> get -> stop -> report evidence
 ```
+## Agent skills
+
+Canonical agent skills live under [`skills/`](skills/). Each skill is triggered by:
+
+- `using-open-relay`: a repository contains `.relay/`, or a task asks to act on Open Relay events.
+- `setting-up-open-relay`: installing, initializing, validating, or proving an Open Relay setup.
+- `waiting-for-open-relay-events`: waiting for a notification or delivery, handling leases, or re-polling.
+- `automating-github-prs-with-open-relay`: watching GitHub pull requests, checks, reviews, or current-head repairs.
+- `recovering-open-relay`: handling restarts, interrupted deliveries, stale leases, or uncertain effects.
+
+Inspect each target path before copying the corresponding directory into `~/.agents/skills/<name>/`:
+
+```bash
+mkdir -p ~/.agents/skills/using-open-relay
+cp -R skills/using-open-relay/. ~/.agents/skills/using-open-relay/
+mkdir -p ~/.agents/skills/setting-up-open-relay
+cp -R skills/setting-up-open-relay/. ~/.agents/skills/setting-up-open-relay/
+mkdir -p ~/.agents/skills/waiting-for-open-relay-events
+cp -R skills/waiting-for-open-relay-events/. ~/.agents/skills/waiting-for-open-relay-events/
+mkdir -p ~/.agents/skills/automating-github-prs-with-open-relay
+cp -R skills/automating-github-prs-with-open-relay/. ~/.agents/skills/automating-github-prs-with-open-relay/
+mkdir -p ~/.agents/skills/recovering-open-relay
+cp -R skills/recovering-open-relay/. ~/.agents/skills/recovering-open-relay/
+```
+
+Do not overwrite unrelated files in those target directories.
+
 
 ### Harness agent delivery
 
