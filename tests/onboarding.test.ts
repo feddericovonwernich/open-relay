@@ -13,6 +13,13 @@ import { loadRegistry } from "../src/registry.ts";
 
 const exec = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+const skillNames = [
+  "using-open-relay",
+  "setting-up-open-relay",
+  "waiting-for-open-relay-events",
+  "automating-github-prs-with-open-relay",
+  "recovering-open-relay",
+] as const;
 const basicPaths = [
   ".relay/events/example.v1.json",
   ".relay/schemas/example-request.json",
@@ -308,15 +315,52 @@ test("relay init --github creates discovery-ready GitHub configuration", async (
   });
 });
 
-test("the packed package runs the documented parked agent delivery lifecycle", { timeout: 20_000 }, async () => {
+test("the packed package runs the documented parked agent delivery lifecycle", { timeout: 40_000 }, async () => {
   await inTemporaryProject(async (directory) => {
     const { stdout: packageName } = await exec("npm", ["pack", "--pack-destination", directory, "--silent"], { cwd: projectRoot });
     const prefix = join(directory, "prefix");
-    await exec("npm", ["install", "--global", "--prefix", prefix, join(directory, packageName.trim()), "--silent"]);
+    const home = join(directory, "home");
+    const installEnvironment = {
+      ...process.env,
+      HOME: home,
+      npm_config_cache: join(directory, "npm-cache"),
+    };
+    await mkdir(home);
+    await exec("npm", ["install", "--global", "--prefix", prefix, join(directory, packageName.trim()), "--silent"], {
+      env: installEnvironment,
+    });
     const relay = join(prefix, "bin", "relay");
     const { stdout: help, stderr } = await exec(relay, ["--help"]);
     assert.match(help, /relay init/);
     assert.equal(stderr, "");
+    const installedSkillsRoot = join(home, ".agents", "skills");
+    const installedSkillContents: Record<string, string> = {};
+    for (const name of skillNames) {
+      const contents = await readFile(join(installedSkillsRoot, name, "SKILL.md"), "utf8");
+      installedSkillContents[name] = contents;
+      assert.equal(contents, await readFile(join(projectRoot, "skills", name, "SKILL.md"), "utf8"), name);
+    }
+    const manifestContents = await readFile(join(installedSkillsRoot, ".open-relay-manifest.json"), "utf8");
+    const skillManifest = JSON.parse(manifestContents) as {
+      schemaVersion: number;
+      skills: Record<string, { sha256: string }>;
+      skipped: Record<string, unknown>;
+    };
+    assert.equal(skillManifest.schemaVersion, 1);
+    assert.deepEqual(Object.keys(skillManifest.skills).sort(), [...skillNames].sort());
+    assert.deepEqual(skillManifest.skipped, {});
+    await exec("npm", ["install", "--global", "--prefix", prefix, join(directory, packageName.trim()), "--silent"], {
+      env: installEnvironment,
+    });
+    for (const name of skillNames) {
+      assert.equal(await readFile(join(installedSkillsRoot, name, "SKILL.md"), "utf8"), installedSkillContents[name], name);
+    }
+    const secondManifestContents = await readFile(join(installedSkillsRoot, ".open-relay-manifest.json"), "utf8");
+    assert.equal(secondManifestContents, manifestContents);
+    const secondSkillManifest = JSON.parse(secondManifestContents) as typeof skillManifest;
+    assert.deepEqual(Object.keys(secondSkillManifest.skills).sort(), [...skillNames].sort());
+    assert.equal(secondSkillManifest.schemaVersion, 1);
+    assert.deepEqual(secondSkillManifest.skipped, {});
 
     const project = join(directory, "project");
     await mkdir(project);
