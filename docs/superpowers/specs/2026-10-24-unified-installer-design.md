@@ -62,6 +62,8 @@ The canonical skill list is hardcoded. The installer does not enumerate arbitrar
 
 The module exports its synchronization function for tests. The lifecycle entry point derives the package root from its own file location and the target root from the current user's home directory. This test seam is not a production path override.
 
+For a global install, `HOME` must be a non-empty absolute path. A missing or invalid `HOME` value is fatal. The script does not infer another target root.
+
 ## Target and Manifest
 
 The target root is:
@@ -184,6 +186,7 @@ For a skipped target, documentation tells the user to inspect it. To resume cano
 `tests/install-skills.test.ts` will exercise the installer against temporary package and home directories:
 
 - non-global install is a no-op;
+- global install with a missing or invalid `HOME` fails before reading packaged skills;
 - first global install creates all five skills and the manifest;
 - an empty target is installed;
 - identical manual copies are adopted;
