@@ -3,16 +3,17 @@
 ## Install and use Open Relay in another repository
 
 1. Verify `node --version` is 22.19 or newer.
-2. Install the CLI:
+2. Install the CLI and canonical skills:
    ```bash
    npm install --global https://github.com/feddericovonwernich/open-relay/archive/refs/heads/main.tar.gz
    ```
-3. Change to the target repository.
-4. Run `relay init`, or `relay init --github owner/repository` when GitHub PR automation is required.
-5. Inspect the generated `.relay/` files before starting the service. Never overwrite existing project instructions or schemas.
-6. Run `relay start` in a persistent terminal.
-7. From another terminal in the same repository, emit an event and read it by the returned ID.
-8. Report the commands run, the event ID, and its observed state.
+3. Inspect `~/.agents/skills/.open-relay-manifest.json`. Preserve and report each entry under `skipped`; move or remove a conflicting target only with user approval.
+4. Change to the target repository.
+5. Run `relay init`, or `relay init --github owner/repository` when GitHub PR automation is required.
+6. Inspect the generated `.relay/` files before starting the service. Never overwrite existing project instructions or schemas.
+7. Run `relay start` in a persistent terminal.
+8. From another terminal in the same repository, emit an event and read it by the returned ID.
+9. Report the commands run, the event ID, and its observed state.
 
 For the complete copy-and-paste procedure, use [`docs/agent-quickstart.md`](docs/agent-quickstart.md).
 
@@ -61,6 +62,8 @@ Source map:
 - `src/store.ts`: durable SQLite state machine.
 - `src/dispatcher.ts`: capability matching and leases.
 - `src/connectors/github/`: GitHub transport, recognizers, normalization, and emission.
+- `scripts/install-skills.mjs`: global npm lifecycle and conflict-safe canonical skill synchronization.
+- `tests/install-skills.test.ts`: installer ownership, update, conflict, and failure contracts.
 - `tests/onboarding.test.ts`: package installation and generated-project contract.
 - `examples/`: checked-in copies of generated projects.
 
