@@ -51,7 +51,7 @@ npm install --global https://github.com/feddericovonwernich/open-relay/archive/r
 relay --help
 ```
 
-The GitHub installation uses the checked-in CLI build verified by CI. Open Relay is not published to the npm registry.
+The command installs or updates the CLI and the five canonical agent skills. It installs from the checked-in CLI build because Open Relay is not published to the npm registry.
 
 ## Two-minute quick start
 
@@ -108,22 +108,11 @@ Canonical agent skills live under [`skills/`](skills/). Each skill is triggered 
 - `automating-github-prs-with-open-relay`: watching GitHub pull requests, checks, reviews, or current-head repairs.
 - `recovering-open-relay`: handling restarts, interrupted deliveries, stale leases, or uncertain effects.
 
-Inspect each target path before copying the corresponding directory into `~/.agents/skills/<name>/`:
+The global install command synchronizes these skills to `~/.agents/skills/`. Open Relay records managed file hashes in `~/.agents/skills/.open-relay-manifest.json`.
 
-```bash
-mkdir -p ~/.agents/skills/using-open-relay
-cp -R skills/using-open-relay/. ~/.agents/skills/using-open-relay/
-mkdir -p ~/.agents/skills/setting-up-open-relay
-cp -R skills/setting-up-open-relay/. ~/.agents/skills/setting-up-open-relay/
-mkdir -p ~/.agents/skills/waiting-for-open-relay-events
-cp -R skills/waiting-for-open-relay-events/. ~/.agents/skills/waiting-for-open-relay-events/
-mkdir -p ~/.agents/skills/automating-github-prs-with-open-relay
-cp -R skills/automating-github-prs-with-open-relay/. ~/.agents/skills/automating-github-prs-with-open-relay/
-mkdir -p ~/.agents/skills/recovering-open-relay
-cp -R skills/recovering-open-relay/. ~/.agents/skills/recovering-open-relay/
-```
+The installer adds missing skills, adopts byte-identical copies, and updates unchanged managed copies. It does not overwrite a modified skill, an unowned skill, a symbolic link, an invalid target, or a directory that contains another file. It records each skipped target and reason under `skipped` in the manifest.
 
-Do not overwrite unrelated files in those target directories.
+Inspect a skipped target before you change it. To restore canonical updates, move or remove that target and run the same global install command again.
 
 
 ### Harness agent delivery
