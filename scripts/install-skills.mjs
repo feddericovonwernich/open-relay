@@ -152,11 +152,19 @@ function formatSummary(decisions) {
   return `Open Relay skills: ${decisions.length - skipped} managed, ${skipped} skipped`;
 }
 
+async function validateSkillsRoot(home, skillsRoot) {
+  const agentsRoot = await optionalLstat(join(home, ".agents"));
+  if (agentsRoot?.isSymbolicLink()) throw new Error("invalid Open Relay skill root: .agents is a symlink");
+  const root = await optionalLstat(skillsRoot);
+  if (root?.isSymbolicLink()) throw new Error("invalid Open Relay skill root: skills is a symlink");
+}
+
 export async function installSkills({ packageRoot: root, home, log = console.log }) {
   if (!isAbsolute(home)) throw new Error("home must be an absolute path");
   const sources = await loadSources(root);
   const skillsRoot = join(home, ".agents", "skills");
   const manifestPath = join(skillsRoot, manifestName);
+  await validateSkillsRoot(home, skillsRoot);
   const previous = await readManifest(manifestPath);
   const decisions = await Promise.all(sources.map((source) => inspectTarget(skillsRoot, source, previous)));
   await mkdir(skillsRoot, { recursive: true, mode: 0o700 });

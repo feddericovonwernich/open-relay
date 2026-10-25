@@ -158,6 +158,28 @@ test("rejects missing, symlinked, and mismatched packaged skills before target w
   });
 });
 
+test("rejects symlinked skill-root ancestors before changing the external target", async () => {
+  for (const level of ["agents", "skills"]) {
+    await withFixture(async ({ packageRoot, home, root }) => {
+      const external = join(root, "external");
+      const externalSkills = join(external, "skills");
+      await mkdir(externalSkills, { recursive: true });
+      if (level === "agents") {
+        await symlink(external, join(home, ".agents"));
+      } else {
+        await mkdir(join(home, ".agents"));
+        await symlink(externalSkills, join(home, ".agents", "skills"));
+      }
+      await assert.rejects(
+        installer.installSkills({ packageRoot, home }),
+        /invalid Open Relay skill root/,
+      );
+      assert.deepEqual(await readdir(level === "agents" ? external : externalSkills), level === "agents" ? ["skills"] : []);
+      assert.equal(await lstat(join(externalSkills, ".open-relay-manifest.json")).catch((error: NodeJS.ErrnoException) => error.code), "ENOENT");
+    });
+  }
+});
+
 test("propagates an unexpected regular-file home error", async () => withFixture(async ({ packageRoot, root }) => {
   const home = join(root, "home-file");
   await writeFile(home, "not a directory");
